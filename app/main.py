@@ -244,39 +244,103 @@ async def broadcast_message(message: dict):
 
 
 async def run_scan():
-    """Run the dovi_convert scan operation."""
+    """Run the dovi_convert scan operation with detailed output."""
     state.is_running = True
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     depth = state.settings.get("scan_depth", 5)
     
     await broadcast_message({
         "type": "output", 
-        "data": f"🔍 Starting scan in: {scan_path}\n"
+        "data": f"{'='*60}\n"
     })
     await broadcast_message({
         "type": "output", 
-        "data": f"📁 Scan depth: {depth} levels\n\n"
+        "data": f"🔍 DOLBY VISION SCAN\n"
+    })
+    await broadcast_message({
+        "type": "output", 
+        "data": f"{'='*60}\n\n"
+    })
+    await broadcast_message({
+        "type": "output", 
+        "data": f"📁 Scan path: {scan_path}\n"
+    })
+    await broadcast_message({
+        "type": "output", 
+        "data": f"📊 Scan depth: {depth} levels\n\n"
     })
     
     try:
-        # Check if dovi_convert exists
-        which_result = await asyncio.create_subprocess_exec(
-            "which", "dovi_convert",
+        # First, let's find all MKV files and show progress
+        await broadcast_message({"type": "output", "data": "🔎 Searching for MKV files...\n\n"})
+        
+        find_cmd = ["find", scan_path, "-maxdepth", str(depth), "-type", "f", "-name", "*.mkv"]
+        find_proc = await asyncio.create_subprocess_exec(
+            *find_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        await which_result.wait()
+        stdout, stderr = await find_proc.communicate()
         
-        if which_result.returncode != 0:
+        mkv_files = [f for f in stdout.decode().strip().split('\n') if f]
+        
+        if not mkv_files:
             await broadcast_message({
                 "type": "output", 
-                "data": "❌ dovi_convert script not found in PATH\n"
+                "data": f"⚠️ No MKV files found in {scan_path}\n"
             })
             await broadcast_message({
                 "type": "output", 
-                "data": "Attempting to download latest version...\n"
+                "data": f"   Make sure your media path is correctly mapped.\n\n"
             })
-            # Try to download it
+        else:
+            await broadcast_message({
+                "type": "output", 
+                "data": f"📂 Found {len(mkv_files)} MKV file(s)\n\n"
+            })
+            
+            # Show first few files
+            for i, f in enumerate(mkv_files[:10]):
+                filename = Path(f).name
+                await broadcast_message({
+                    "type": "output", 
+                    "data": f"   • {filename}\n"
+                })
+            
+            if len(mkv_files) > 10:
+                await broadcast_message({
+                    "type": "output", 
+                    "data": f"   ... and {len(mkv_files) - 10} more\n"
+                })
+            
+            await broadcast_message({"type": "output", "data": "\n"})
+        
+        # Check if dovi_convert exists
+        await broadcast_message({"type": "output", "data": "🔧 Checking tools...\n"})
+        
+        import shutil
+        dovi_convert_path = shutil.which("dovi_convert")
+        dovi_tool_path = shutil.which("dovi_tool")
+        mediainfo_path = shutil.which("mediainfo")
+        
+        await broadcast_message({
+            "type": "output", 
+            "data": f"   • dovi_convert: {'✅ Found' if dovi_convert_path else '❌ Not found'}\n"
+        })
+        await broadcast_message({
+            "type": "output", 
+            "data": f"   • dovi_tool: {'✅ Found' if dovi_tool_path else '❌ Not found'}\n"
+        })
+        await broadcast_message({
+            "type": "output", 
+            "data": f"   • mediainfo: {'✅ Found' if mediainfo_path else '❌ Not found'}\n\n"
+        })
+        
+        if not dovi_convert_path:
+            await broadcast_message({
+                "type": "output", 
+                "data": "⬇️ Downloading dovi_convert script...\n"
+            })
             download_cmd = [
                 "wget", "-q", 
                 "https://raw.githubusercontent.com/cryptochrome/dovi_convert/main/dovi_convert.sh",
@@ -290,14 +354,41 @@ async def run_scan():
             
             await broadcast_message({"type": "output", "data": "✅ Downloaded dovi_convert\n\n"})
         
-        cmd = ["dovi_convert", "-scan", str(depth)]
-        await broadcast_message({"type": "output", "data": f"Running: {' '.join(cmd)}\n\n"})
-        await run_command(cmd, cwd=scan_path)
+        # Now run the actual scan
+        if mkv_files:
+            await broadcast_message({
+                "type": "output", 
+                "data": f"{'─'*60}\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": "🎬 Scanning for Dolby Vision Profile 7 files...\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": f"{'─'*60}\n\n"
+            })
+            
+            cmd = ["dovi_convert", "-scan", str(depth)]
+            await run_command(cmd, cwd=scan_path)
+        
     except FileNotFoundError as e:
         await broadcast_message({"type": "output", "data": f"\n❌ Command not found: {str(e)}\n"})
     except Exception as e:
         await broadcast_message({"type": "output", "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"})
     finally:
+        await broadcast_message({
+            "type": "output", 
+            "data": f"\n{'='*60}\n"
+        })
+        await broadcast_message({
+            "type": "output", 
+            "data": "✅ Scan complete\n"
+        })
+        await broadcast_message({
+            "type": "output", 
+            "data": f"{'='*60}\n"
+        })
         state.is_running = False
         state.current_process = None
         await broadcast_message({"type": "status", "running": False})
