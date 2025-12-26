@@ -62,12 +62,3 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Update Docker Hub Description
-        if: github.event_name != 'pull_request'
-        uses: peter-evans/dockerhub-description@v4
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.IMAGE_NAME }}
-          readme-filepath: ./README.md
-
