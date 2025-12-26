@@ -213,6 +213,7 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time output streaming."""
     await websocket.accept()
     state.websocket_clients.append(websocket)
+    print(f"WebSocket connected. Total clients: {len(state.websocket_clients)}")
     
     try:
         # Send initial status
@@ -223,11 +224,29 @@ async def websocket_endpoint(websocket: WebSocket):
         })
         
         while True:
-            # Keep connection alive and handle any incoming messages
-            data = await websocket.receive_text()
-            # Could handle client commands here if needed
+            try:
+                # Wait for messages with a timeout for keepalive
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0
+                )
+                # Handle ping/pong for keepalive
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # Send a keepalive ping
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except:
+                    break
     except WebSocketDisconnect:
-        state.websocket_clients.remove(websocket)
+        pass
+    except Exception as e:
+        print(f"WebSocket error: {e}")
+    finally:
+        if websocket in state.websocket_clients:
+            state.websocket_clients.remove(websocket)
+        print(f"WebSocket disconnected. Total clients: {len(state.websocket_clients)}")
 
 
 async def broadcast_message(message: dict):

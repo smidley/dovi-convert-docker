@@ -131,21 +131,34 @@ class DoViConvertApp {
             console.log('WebSocket connected');
             this.reconnectAttempts = 0;
             this.appendToTerminal('🔗 Connected to server\n', 'system');
+            
+            // Start keepalive ping every 20 seconds
+            this.startKeepalive();
         };
         
         this.ws.onmessage = (event) => {
             console.log('WebSocket message:', event.data);
             try {
                 const data = JSON.parse(event.data);
+                // Ignore ping messages
+                if (data.type === 'ping') {
+                    this.ws.send('ping');
+                    return;
+                }
                 this.handleMessage(data);
             } catch (e) {
+                // Handle non-JSON messages (like "pong")
+                if (event.data === 'pong') {
+                    console.log('Keepalive pong received');
+                    return;
+                }
                 console.error('Failed to parse WebSocket message:', e);
-                this.appendToTerminal(`Raw message: ${event.data}\n`, 'system');
             }
         };
         
         this.ws.onclose = (event) => {
             console.log('WebSocket disconnected:', event.code, event.reason);
+            this.stopKeepalive();
             this.appendToTerminal(`⚠️ Disconnected (code: ${event.code})\n`, 'error');
             this.attemptReconnect();
         };
@@ -154,6 +167,22 @@ class DoViConvertApp {
             console.error('WebSocket error:', error);
             this.appendToTerminal('❌ WebSocket connection error\n', 'error');
         };
+    }
+    
+    startKeepalive() {
+        this.stopKeepalive();
+        this.keepaliveInterval = setInterval(() => {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send('ping');
+            }
+        }, 20000);
+    }
+    
+    stopKeepalive() {
+        if (this.keepaliveInterval) {
+            clearInterval(this.keepaliveInterval);
+            this.keepaliveInterval = null;
+        }
     }
 
     attemptReconnect() {
