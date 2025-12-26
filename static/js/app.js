@@ -5,76 +5,97 @@
 
 class DoViConvertApp {
     constructor() {
+        console.log('DoViConvertApp constructor starting...');
         this.ws = null;
         this.isRunning = false;
         this.currentPath = '/media';
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
+        this.keepaliveInterval = null;
         
+        console.log('Initializing elements...');
         this.initElements();
+        console.log('Initializing event listeners...');
         this.initEventListeners();
+        console.log('Connecting WebSocket...');
         this.connectWebSocket();
+        console.log('Loading settings...');
         this.loadSettings();
+        console.log('Constructor complete');
     }
 
     initElements() {
+        // Helper to get element safely
+        const getEl = (id) => {
+            const el = document.getElementById(id);
+            if (!el) console.warn(`Element not found: ${id}`);
+            return el;
+        };
+        
         // Status
-        this.statusIndicator = document.getElementById('statusIndicator');
-        this.statusText = this.statusIndicator.querySelector('.status-text');
+        this.statusIndicator = getEl('statusIndicator');
+        this.statusText = this.statusIndicator?.querySelector('.status-text');
         
         // Controls
-        this.scanPathInput = document.getElementById('scanPath');
-        this.scanDepthInput = document.getElementById('scanDepth');
-        this.safeModeCheckbox = document.getElementById('safeMode');
-        this.includeSimpleCheckbox = document.getElementById('includeSimple');
-        this.autoCleanupCheckbox = document.getElementById('autoCleanup');
+        this.scanPathInput = getEl('scanPath');
+        this.scanDepthInput = getEl('scanDepth');
+        this.safeModeCheckbox = getEl('safeMode');
+        this.includeSimpleCheckbox = getEl('includeSimple');
+        this.autoCleanupCheckbox = getEl('autoCleanup');
         
         // Buttons
-        this.browseBtn = document.getElementById('browseBtn');
-        this.scanBtn = document.getElementById('scanBtn');
-        this.convertBtn = document.getElementById('convertBtn');
-        this.stopBtn = document.getElementById('stopBtn');
-        this.clearBtn = document.getElementById('clearBtn');
+        this.browseBtn = getEl('browseBtn');
+        this.scanBtn = getEl('scanBtn');
+        this.convertBtn = getEl('convertBtn');
+        this.stopBtn = getEl('stopBtn');
+        this.clearBtn = getEl('clearBtn');
         
         // Terminal
-        this.terminal = document.getElementById('terminal');
-        this.terminalContent = document.getElementById('terminalContent');
+        this.terminal = getEl('terminal');
+        this.terminalContent = getEl('terminalContent');
         
         // Modal
-        this.modal = document.getElementById('browserModal');
-        this.currentPathDisplay = document.getElementById('currentPath');
-        this.directoryList = document.getElementById('directoryList');
-        this.modalClose = document.getElementById('modalClose');
-        this.modalCancel = document.getElementById('modalCancel');
-        this.modalSelect = document.getElementById('modalSelect');
+        this.modal = getEl('browserModal');
+        this.currentPathDisplay = getEl('currentPath');
+        this.directoryList = getEl('directoryList');
+        this.modalClose = getEl('modalClose');
+        this.modalCancel = getEl('modalCancel');
+        this.modalSelect = getEl('modalSelect');
     }
 
     initEventListeners() {
+        // Helper to add event listener safely
+        const addListener = (el, event, handler) => {
+            if (el) el.addEventListener(event, handler);
+        };
+        
         // Browse button
-        this.browseBtn.addEventListener('click', () => this.openBrowser());
-        this.scanPathInput.addEventListener('click', () => this.openBrowser());
+        addListener(this.browseBtn, 'click', () => this.openBrowser());
+        addListener(this.scanPathInput, 'click', () => this.openBrowser());
         
         // Action buttons
-        this.scanBtn.addEventListener('click', () => this.startScan());
-        this.convertBtn.addEventListener('click', () => this.startConvert());
-        this.stopBtn.addEventListener('click', () => this.stopProcess());
-        this.clearBtn.addEventListener('click', () => this.clearTerminal());
+        addListener(this.scanBtn, 'click', () => this.startScan());
+        addListener(this.convertBtn, 'click', () => this.startConvert());
+        addListener(this.stopBtn, 'click', () => this.stopProcess());
+        addListener(this.clearBtn, 'click', () => this.clearTerminal());
         
         // Settings changes
-        this.scanDepthInput.addEventListener('change', () => this.saveSettings());
-        this.safeModeCheckbox.addEventListener('change', () => this.saveSettings());
-        this.includeSimpleCheckbox.addEventListener('change', () => this.saveSettings());
-        this.autoCleanupCheckbox.addEventListener('change', () => this.saveSettings());
+        addListener(this.scanDepthInput, 'change', () => this.saveSettings());
+        addListener(this.safeModeCheckbox, 'change', () => this.saveSettings());
+        addListener(this.includeSimpleCheckbox, 'change', () => this.saveSettings());
+        addListener(this.autoCleanupCheckbox, 'change', () => this.saveSettings());
         
         // Modal
-        this.modalClose.addEventListener('click', () => this.closeModal());
-        this.modalCancel.addEventListener('click', () => this.closeModal());
-        this.modalSelect.addEventListener('click', () => this.selectDirectory());
-        this.modal.querySelector('.modal-backdrop').addEventListener('click', () => this.closeModal());
+        addListener(this.modalClose, 'click', () => this.closeModal());
+        addListener(this.modalCancel, 'click', () => this.closeModal());
+        addListener(this.modalSelect, 'click', () => this.selectDirectory());
+        
+        const modalBackdrop = this.modal?.querySelector('.modal-backdrop');
+        addListener(modalBackdrop, 'click', () => this.closeModal());
         
         // Keyboard shortcuts
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.modal.classList.contains('active')) {
+            if (e.key === 'Escape' && this.modal?.classList.contains('active')) {
                 this.closeModal();
             }
         });
@@ -415,5 +436,12 @@ class DoViConvertApp {
 
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    window.app = new DoViConvertApp();
+    console.log('DOM loaded, initializing app...');
+    try {
+        window.app = new DoViConvertApp();
+        console.log('App initialized successfully');
+    } catch (error) {
+        console.error('Failed to initialize app:', error);
+        document.body.innerHTML = `<pre style="color: red; padding: 20px;">Error initializing app: ${error.message}\n\n${error.stack}</pre>`;
+    }
 });
