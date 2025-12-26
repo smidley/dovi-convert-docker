@@ -3,7 +3,7 @@ version: '3.8'
 services:
   dovi-convert:
     build: .
-    image: scottbrant/dovi-convert:latest
+    image: tiltscott/dovi-convert:latest
     container_name: dovi-convert
     ports:
       - "8080:8080"

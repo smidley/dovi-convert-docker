@@ -2,8 +2,8 @@
 
 A Docker container with a web interface for converting Dolby Vision Profile 7 MKV files (UHD Blu-ray rips) to Profile 8.1. Based on the excellent [dovi_convert](https://github.com/cryptochrome/dovi_convert) script by cryptochrome.
 
-![Docker Pulls](https://img.shields.io/docker/pulls/scottbrant/dovi-convert)
-![Docker Image Size](https://img.shields.io/docker/image-size/scottbrant/dovi-convert/latest)
+![Docker Pulls](https://img.shields.io/docker/pulls/tiltscott/dovi-convert)
+![Docker Image Size](https://img.shields.io/docker/image-size/tiltscott/dovi-convert/latest)
 
 ## Why Convert Profile 7 to 8.1?
 
@@ -36,7 +36,7 @@ docker run -d \
   -v /path/to/media:/media \
   -v /path/to/config:/config \
   -e TZ=America/New_York \
-  scottbrant/dovi-convert:latest
+  tiltscott/dovi-convert:latest
 ```
 
 ### Docker Compose
@@ -46,7 +46,7 @@ version: '3.8'
 
 services:
   dovi-convert:
-    image: scottbrant/dovi-convert:latest
+    image: tiltscott/dovi-convert:latest
     container_name: dovi-convert
     ports:
       - "8080:8080"
@@ -120,7 +120,7 @@ Original files are preserved as `*.bak.dovi_convert`. Enable **Auto Cleanup** on
 ## Building Locally
 
 ```bash
-git clone https://github.com/scottbrant/dovi-convert-docker.git
+git clone https://github.com/tiltScott/dovi-convert-docker.git
 cd dovi-convert-docker
 docker build -t dovi-convert .
 ```
@@ -143,5 +143,5 @@ MIT License - See [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/scottbrant/dovi-convert-docker/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/scottbrant/dovi-convert-docker/discussions)
+- **Issues**: [GitHub Issues](https://github.com/tiltScott/dovi-convert-docker/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/tiltScott/dovi-convert-docker/discussions)
