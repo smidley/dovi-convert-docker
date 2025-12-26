@@ -59,6 +59,14 @@ ENV CONFIG_PATH=/config
 # Expose web interface port
 EXPOSE 8080
 
+# Labels for Unraid and container metadata
+LABEL maintainer="smidley" \
+      org.opencontainers.image.title="DoVi Convert" \
+      org.opencontainers.image.description="Web UI for converting Dolby Vision Profile 7 to Profile 8.1" \
+      org.opencontainers.image.source="https://github.com/smidley/dovi-convert-docker" \
+      net.unraid.docker.webui="http://[IP]:[PORT:8080]/" \
+      net.unraid.docker.icon="https://raw.githubusercontent.com/smidley/dovi-convert-docker/main/icon.png"
+
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/ || exit 1
