@@ -122,6 +122,9 @@ class DoViConvertApp {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
         
+        console.log('Connecting to WebSocket:', wsUrl);
+        this.appendToTerminal(`🔌 Connecting to ${wsUrl}...\n`, 'system');
+        
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
@@ -131,18 +134,25 @@ class DoViConvertApp {
         };
         
         this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.handleMessage(data);
+            console.log('WebSocket message:', event.data);
+            try {
+                const data = JSON.parse(event.data);
+                this.handleMessage(data);
+            } catch (e) {
+                console.error('Failed to parse WebSocket message:', e);
+                this.appendToTerminal(`Raw message: ${event.data}\n`, 'system');
+            }
         };
         
-        this.ws.onclose = () => {
-            console.log('WebSocket disconnected');
-            this.appendToTerminal('⚠️ Disconnected from server\n', 'error');
+        this.ws.onclose = (event) => {
+            console.log('WebSocket disconnected:', event.code, event.reason);
+            this.appendToTerminal(`⚠️ Disconnected (code: ${event.code})\n`, 'error');
             this.attemptReconnect();
         };
         
         this.ws.onerror = (error) => {
             console.error('WebSocket error:', error);
+            this.appendToTerminal('❌ WebSocket connection error\n', 'error');
         };
     }
 
@@ -242,10 +252,21 @@ class DoViConvertApp {
 
     async startScan() {
         this.clearTerminal();
+        this.appendToTerminal('📡 Sending scan request...\n', 'system');
+        
         try {
-            await fetch('/api/scan', { method: 'POST' });
+            const response = await fetch('/api/scan', { method: 'POST' });
+            const data = await response.json();
+            
+            if (!response.ok) {
+                this.appendToTerminal(`❌ Server error: ${data.detail || response.statusText}\n`, 'error');
+                return;
+            }
+            
+            this.appendToTerminal(`✅ Scan started: ${JSON.stringify(data)}\n`, 'system');
         } catch (error) {
             this.appendToTerminal(`❌ Failed to start scan: ${error.message}\n`, 'error');
+            console.error('Scan error:', error);
         }
     }
 

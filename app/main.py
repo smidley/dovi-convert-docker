@@ -85,6 +85,39 @@ async def get_status():
     }
 
 
+@app.get("/api/debug")
+async def debug_info():
+    """Debug endpoint to check system status."""
+    import shutil
+    
+    # Check if commands exist
+    dovi_convert_path = shutil.which("dovi_convert")
+    dovi_tool_path = shutil.which("dovi_tool")
+    ffmpeg_path = shutil.which("ffmpeg")
+    
+    # Check media path
+    media_exists = Path(MEDIA_PATH).exists()
+    media_contents = []
+    if media_exists:
+        try:
+            media_contents = [str(p.name) for p in Path(MEDIA_PATH).iterdir()][:10]
+        except:
+            pass
+    
+    return {
+        "dovi_convert": dovi_convert_path,
+        "dovi_tool": dovi_tool_path,
+        "ffmpeg": ffmpeg_path,
+        "media_path": MEDIA_PATH,
+        "media_exists": media_exists,
+        "media_contents": media_contents,
+        "config_path": CONFIG_PATH,
+        "settings": state.settings,
+        "websocket_clients": len(state.websocket_clients),
+        "is_running": state.is_running
+    }
+
+
 @app.get("/api/settings")
 async def get_settings():
     """Get current settings."""
