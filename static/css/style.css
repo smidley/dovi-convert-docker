@@ -299,8 +299,39 @@ body::before {
     border-radius: 50%;
     font-size: 0.7rem;
     color: var(--text-muted);
-    cursor: help;
+    cursor: pointer;
     margin-left: auto;
+    transition: var(--transition-fast);
+}
+
+.tooltip:hover {
+    background: var(--accent-primary);
+    color: white;
+}
+
+.tooltip-popup {
+    position: fixed;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    font-size: 0.8125rem;
+    color: var(--text-primary);
+    max-width: 250px;
+    z-index: 1001;
+    box-shadow: var(--shadow-md);
+    animation: tooltip-enter 0.15s ease-out;
+}
+
+@keyframes tooltip-enter {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 /* Buttons */

@@ -220,12 +220,50 @@ async def run_scan():
         "type": "output", 
         "data": f"🔍 Starting scan in: {scan_path}\n"
     })
+    await broadcast_message({
+        "type": "output", 
+        "data": f"📁 Scan depth: {depth} levels\n\n"
+    })
     
     try:
+        # Check if dovi_convert exists
+        which_result = await asyncio.create_subprocess_exec(
+            "which", "dovi_convert",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await which_result.wait()
+        
+        if which_result.returncode != 0:
+            await broadcast_message({
+                "type": "output", 
+                "data": "❌ dovi_convert script not found in PATH\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": "Attempting to download latest version...\n"
+            })
+            # Try to download it
+            download_cmd = [
+                "wget", "-q", 
+                "https://raw.githubusercontent.com/cryptochrome/dovi_convert/main/dovi_convert.sh",
+                "-O", "/usr/local/bin/dovi_convert"
+            ]
+            download_proc = await asyncio.create_subprocess_exec(*download_cmd)
+            await download_proc.wait()
+            
+            chmod_proc = await asyncio.create_subprocess_exec("chmod", "+x", "/usr/local/bin/dovi_convert")
+            await chmod_proc.wait()
+            
+            await broadcast_message({"type": "output", "data": "✅ Downloaded dovi_convert\n\n"})
+        
         cmd = ["dovi_convert", "-scan", str(depth)]
+        await broadcast_message({"type": "output", "data": f"Running: {' '.join(cmd)}\n\n"})
         await run_command(cmd, cwd=scan_path)
+    except FileNotFoundError as e:
+        await broadcast_message({"type": "output", "data": f"\n❌ Command not found: {str(e)}\n"})
     except Exception as e:
-        await broadcast_message({"type": "output", "data": f"\n❌ Error: {str(e)}\n"})
+        await broadcast_message({"type": "output", "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"})
     finally:
         state.is_running = False
         state.current_process = None
@@ -254,6 +292,7 @@ async def run_convert():
         if include_simple:
             cmd.append("-include-simple")
         
+        await broadcast_message({"type": "output", "data": f"Running: {' '.join(cmd)}\n\n"})
         await run_command(cmd, cwd=scan_path)
         
         # Auto cleanup if enabled
@@ -261,8 +300,10 @@ async def run_convert():
             await broadcast_message({"type": "output", "data": "\n🧹 Running cleanup...\n"})
             cleanup_cmd = ["dovi_convert", "-cleanup", "-r"]
             await run_command(cleanup_cmd, cwd=scan_path)
+    except FileNotFoundError as e:
+        await broadcast_message({"type": "output", "data": f"\n❌ Command not found: {str(e)}\n"})
     except Exception as e:
-        await broadcast_message({"type": "output", "data": f"\n❌ Error: {str(e)}\n"})
+        await broadcast_message({"type": "output", "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"})
     finally:
         state.is_running = False
         state.current_process = None
@@ -271,31 +312,50 @@ async def run_convert():
 
 async def run_command(cmd: list, cwd: str = None):
     """Run a command and stream output via WebSocket."""
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=cwd
-    )
-    
-    state.current_process = process
-    
-    while True:
-        line = await process.stdout.readline()
-        if not line:
-            break
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd
+        )
         
-        text = line.decode('utf-8', errors='replace')
-        await broadcast_message({"type": "output", "data": text})
-    
-    await process.wait()
-    
-    if process.returncode == 0:
-        await broadcast_message({"type": "output", "data": "\n✅ Process completed successfully\n"})
-    else:
+        state.current_process = process
+        
+        output_received = False
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            
+            output_received = True
+            text = line.decode('utf-8', errors='replace')
+            await broadcast_message({"type": "output", "data": text})
+        
+        await process.wait()
+        
+        if not output_received:
+            await broadcast_message({
+                "type": "output", 
+                "data": "(No output received from command)\n"
+            })
+        
+        if process.returncode == 0:
+            await broadcast_message({"type": "output", "data": "\n✅ Process completed successfully\n"})
+        else:
+            await broadcast_message({
+                "type": "output", 
+                "data": f"\n⚠️ Process exited with code {process.returncode}\n"
+            })
+    except FileNotFoundError:
         await broadcast_message({
             "type": "output", 
-            "data": f"\n⚠️ Process exited with code {process.returncode}\n"
+            "data": f"❌ Command not found: {cmd[0]}\n"
+        })
+    except Exception as e:
+        await broadcast_message({
+            "type": "output", 
+            "data": f"❌ Error running command: {type(e).__name__}: {str(e)}\n"
         })
 
 

@@ -78,6 +78,44 @@ class DoViConvertApp {
                 this.closeModal();
             }
         });
+        
+        // Initialize tooltips
+        this.initTooltips();
+    }
+    
+    initTooltips() {
+        const tooltips = document.querySelectorAll('.tooltip');
+        tooltips.forEach(tooltip => {
+            tooltip.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const text = tooltip.getAttribute('title');
+                this.showTooltipPopup(tooltip, text);
+            });
+        });
+        
+        // Close tooltip when clicking elsewhere
+        document.addEventListener('click', () => {
+            const existing = document.querySelector('.tooltip-popup');
+            if (existing) existing.remove();
+        });
+    }
+    
+    showTooltipPopup(element, text) {
+        // Remove any existing popup
+        const existing = document.querySelector('.tooltip-popup');
+        if (existing) existing.remove();
+        
+        const popup = document.createElement('div');
+        popup.className = 'tooltip-popup';
+        popup.textContent = text;
+        document.body.appendChild(popup);
+        
+        const rect = element.getBoundingClientRect();
+        popup.style.top = `${rect.bottom + 8}px`;
+        popup.style.left = `${rect.left - 100}px`;
+        
+        // Auto-hide after 3 seconds
+        setTimeout(() => popup.remove(), 3000);
     }
 
     connectWebSocket() {
