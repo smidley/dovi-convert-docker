@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1a2e"/>
+      <stop offset="100%" style="stop-color:#0a0a0f"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7c5dfa"/>
+      <stop offset="100%" style="stop-color:#9277ff"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00d4aa"/>
+      <stop offset="100%" style="stop-color:#00f5c4"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="512" height="512" rx="80" fill="url(#bg)"/>
+  
+  <!-- DV Text -->
+  <text x="256" y="200" font-family="Arial Black, sans-serif" font-size="120" font-weight="900" fill="url(#accent)" text-anchor="middle">DV</text>
+  
+  <!-- Arrow -->
+  <path d="M160 300 L256 300 L256 260 L352 320 L256 380 L256 340 L160 340 Z" fill="url(#green)"/>
+  
+  <!-- 8.1 Text -->
+  <text x="256" y="460" font-family="Arial Black, sans-serif" font-size="80" font-weight="900" fill="#f8f8f2" text-anchor="middle">8.1</text>
+</svg>
+
