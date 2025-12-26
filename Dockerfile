@@ -8,9 +8,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Build essentials for compiling
-    build-essential \
-    pkg-config \
     # FFmpeg and multimedia tools
     ffmpeg \
     mediainfo \
@@ -19,8 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     ca-certificates \
-    # Runtime libraries
-    libfdk-aac2 \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dovi_tool from GitHub releases
