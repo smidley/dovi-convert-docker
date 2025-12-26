@@ -1,14 +1,14 @@
 <?xml version="1.0"?>
 <Container version="2">
     <Name>dovi-convert</Name>
-    <Repository>tiltscott/dovi-convert</Repository>
-    <Registry>https://hub.docker.com/r/tiltscott/dovi-convert</Registry>
+    <Repository>smidley/dovi-convert</Repository>
+    <Registry>https://hub.docker.com/r/smidley/dovi-convert</Registry>
     <Network>bridge</Network>
     <MyIP/>
     <Shell>bash</Shell>
     <Privileged>false</Privileged>
-    <Support>https://github.com/tiltScott/dovi-convert-docker/issues</Support>
-    <Project>https://github.com/tiltScott/dovi-convert-docker</Project>
+    <Support>https://github.com/smidley/dovi-convert-docker/issues</Support>
+    <Project>https://github.com/smidley/dovi-convert-docker</Project>
     <Overview>
 DoVi Convert provides a web interface for converting Dolby Vision Profile 7 MKV files (UHD Blu-ray rips) to Profile 8.1 for better compatibility with media players like Apple TV 4K, Nvidia Shield, and Plex.
 
@@ -24,8 +24,8 @@ Based on the dovi_convert script by cryptochrome.
     </Overview>
     <Category>MediaApp:Video</Category>
     <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-    <TemplateURL>https://raw.githubusercontent.com/tiltScott/dovi-convert-docker/main/unraid/dovi-convert.xml</TemplateURL>
-    <Icon>https://raw.githubusercontent.com/tiltScott/dovi-convert-docker/main/icon.png</Icon>
+    <TemplateURL>https://raw.githubusercontent.com/smidley/dovi-convert-docker/main/unraid/dovi-convert.xml</TemplateURL>
+    <Icon>https://raw.githubusercontent.com/smidley/dovi-convert-docker/main/icon.png</Icon>
     <ExtraParams/>
     <PostArgs/>
     <CPUset/>
