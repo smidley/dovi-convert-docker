@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DoVi Convert</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">◈</span>
+                <h1>DoVi Convert</h1>
+            </div>
+            <div class="status-indicator" id="statusIndicator">
+                <span class="status-dot"></span>
+                <span class="status-text">Ready</span>
+            </div>
+        </header>
+
+        <main class="main-content">
+            <section class="control-panel">
+                <div class="panel-header">
+                    <h2>Controls</h2>
+                </div>
+                
+                <div class="path-selector">
+                    <label for="scanPath">Media Directory</label>
+                    <div class="path-input-group">
+                        <input type="text" id="scanPath" placeholder="/media/movies" readonly>
+                        <button class="btn btn-secondary" id="browseBtn" title="Browse">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-group">
+                    <div class="setting-item">
+                        <label for="scanDepth">Scan Depth</label>
+                        <input type="number" id="scanDepth" min="1" max="10" value="5">
+                    </div>
+                    
+                    <div class="setting-item checkbox">
+                        <input type="checkbox" id="safeMode">
+                        <label for="safeMode">Safe Mode</label>
+                        <span class="tooltip" title="Extract video to disk before converting (slower but more reliable)">?</span>
+                    </div>
+                    
+                    <div class="setting-item checkbox">
+                        <input type="checkbox" id="includeSimple">
+                        <label for="includeSimple">Include Simple FEL</label>
+                        <span class="tooltip" title="Auto-include Simple FEL files in batch conversion">?</span>
+                    </div>
+                    
+                    <div class="setting-item checkbox">
+                        <input type="checkbox" id="autoCleanup">
+                        <label for="autoCleanup">Auto Cleanup</label>
+                        <span class="tooltip" title="Automatically delete backup files after conversion">?</span>
+                    </div>
+                </div>
+
+                <div class="action-buttons">
+                    <button class="btn btn-primary btn-large" id="scanBtn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        Scan for DV Files
+                    </button>
+                    <button class="btn btn-accent btn-large" id="convertBtn">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                        </svg>
+                        Start Conversion
+                    </button>
+                    <button class="btn btn-danger" id="stopBtn" disabled>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="6" y="6" width="12" height="12"></rect>
+                        </svg>
+                        Stop
+                    </button>
+                </div>
+            </section>
+
+            <section class="output-panel">
+                <div class="panel-header">
+                    <h2>Output</h2>
+                    <button class="btn btn-ghost" id="clearBtn" title="Clear output">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                </div>
+                <div class="terminal" id="terminal">
+                    <div class="terminal-content" id="terminalContent">
+                        <p class="welcome-msg">Welcome to DoVi Convert</p>
+                        <p class="welcome-msg dim">Configure your media directory and click "Scan for DV Files" to begin.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Directory Browser Modal -->
+        <div class="modal" id="browserModal">
+            <div class="modal-backdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Select Directory</h3>
+                    <button class="btn btn-ghost modal-close" id="modalClose">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="current-path" id="currentPath">/media</div>
+                    <div class="directory-list" id="directoryList">
+                        <!-- Populated by JavaScript -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="modalCancel">Cancel</button>
+                    <button class="btn btn-primary" id="modalSelect">Select</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Documentation
+README.md
+LICENSE
+CHANGELOG.md
+docs/
+
+# Development
+.vscode
+.idea
+*.pyc
+__pycache__
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.env.*
+
+# Testing
+tests/
+test/
+*.test.py
+.pytest_cache/
+.coverage
+
+# Docker
+docker-compose*.yml
+Dockerfile.dev
+
+# Unraid templates (not needed in image)
+unraid/
+
+# OS files
+.DS_Store
+Thumbs.db
