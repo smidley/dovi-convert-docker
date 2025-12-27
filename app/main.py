@@ -8,6 +8,8 @@ import os
 import json
 import traceback
 import shlex
+import logging
+import sys
 import aiohttp
 from pathlib import Path
 from datetime import datetime
@@ -18,6 +20,15 @@ from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from pydantic import BaseModel
 import subprocess
+
+# Configure logging to output to container logs (stdout)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("dovi_convert")
 
 app = FastAPI(title="DoVi Convert", version="1.1.0")
 
@@ -452,11 +463,11 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         await websocket.accept()
     except Exception as e:
-        print(f"WebSocket accept failed: {e}", flush=True)
+        logger.error(f"WebSocket accept failed: {e}")
         return
         
     state.websocket_clients.append(websocket)
-    print(f"WebSocket connected. Total clients: {len(state.websocket_clients)}", flush=True)
+    logger.info(f"WebSocket connected. Total clients: {len(state.websocket_clients)}")
     
     try:
         await websocket.send_json({
@@ -477,13 +488,13 @@ async def websocket_endpoint(websocket: WebSocket):
                     break
                     
     except WebSocketDisconnect:
-        print("WebSocket client disconnected normally", flush=True)
+        logger.debug("WebSocket client disconnected normally")
     except Exception as e:
-        print(f"WebSocket error: {type(e).__name__}: {e}", flush=True)
+        logger.error(f"WebSocket error: {type(e).__name__}: {e}")
     finally:
         if websocket in state.websocket_clients:
             state.websocket_clients.remove(websocket)
-        print(f"WebSocket disconnected. Total clients: {len(state.websocket_clients)}", flush=True)
+        logger.info(f"WebSocket disconnected. Total clients: {len(state.websocket_clients)}")
 
 
 async def broadcast_message(message: dict):
@@ -769,10 +780,12 @@ async def run_jellyfin_scan():
 
 async def run_scan(incremental: bool = True):
     """Run Dolby Vision scan using mediainfo."""
+    logger.info(f"Starting {'incremental' if incremental else 'full'} scan")
     state.is_running = True
     state.scan_cancelled = False
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     depth = state.settings.get("scan_depth", 5)
+    logger.info(f"Scan path: {scan_path}, depth: {depth}")
     
     await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
     await broadcast_message({"type": "output", "data": f"🔍 DOLBY VISION SCAN {'(Incremental)' if incremental else '(Full)'}\n"})
@@ -992,10 +1005,12 @@ async def run_scan(incremental: bool = True):
 
 async def run_convert(files: List[str] = None):
     """Run conversion on selected files or batch."""
+    logger.info(f"Starting conversion - files: {len(files) if files else 'batch'}")
     state.is_running = True
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     safe_mode = state.settings.get("safe_mode", False)
     include_simple = state.settings.get("include_simple_fel", False)
+    logger.info(f"Conversion settings - safe_mode: {safe_mode}, include_simple: {include_simple}")
     
     conversion_results = []  # Track success/failure for each file
     final_status = "complete"  # Track overall status for progress bar
@@ -1004,6 +1019,7 @@ async def run_convert(files: List[str] = None):
         if files:
             # Convert specific files
             total = len(files)
+            logger.info(f"Converting {total} specific files")
             await broadcast_message({"type": "output", "data": f"🎬 Converting {total} files...\n\n"})
             
             for i, filepath in enumerate(files, 1):
@@ -1191,15 +1207,19 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
     """Run a conversion command with progress parsing."""
     import re
     
+    logger.info(f"Running conversion [{file_num}/{total_files}]: {filename}")
+    
     try:
         # Check if main executable exists first
         main_cmd = cmd[0]
         if main_cmd.startswith('/') and not Path(main_cmd).exists():
+            logger.error(f"Script not found: {main_cmd}")
             await broadcast_message({"type": "output", "data": f"❌ Script not found: {main_cmd}\n"})
             return False
         
         # Join command into a string for shell execution with proper escaping
         cmd_str = " ".join(shlex.quote(c) for c in cmd)
+        logger.info(f"Command: {cmd_str}")
         
         await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n\n"})
         
@@ -1280,13 +1300,17 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             })
         
         await process.wait()
+        logger.info(f"Process exited with code {process.returncode}")
         
         # Check if output looks like just usage info (script didn't actually run)
         output_text = ''.join(output_lines)
         is_just_usage = 'Usage:' in output_text and 'dovi_convert -' in output_text and not saw_success
         
+        logger.info(f"Output analysis - saw_error: {saw_error}, saw_success: {saw_success}, is_just_usage: {is_just_usage}")
+        
         # Determine success based on exit code AND output content
         if process.returncode == 0 and not saw_error and not is_just_usage:
+            logger.info(f"Conversion SUCCESS: {filename}")
             await broadcast_message({
                 "type": "progress",
                 "data": {
@@ -1301,13 +1325,16 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             })
             return True
         else:
+            logger.warning(f"Conversion FAILED: {filename} - exit_code={process.returncode}, saw_error={saw_error}, is_just_usage={is_just_usage}")
             if is_just_usage:
+                logger.warning("Script showed usage info without converting - possible command format issue")
                 await broadcast_message({"type": "output", "data": "\n⚠️ dovi_convert showed usage info but didn't convert - check command format\n"})
             elif saw_error:
                 await broadcast_message({"type": "output", "data": "\n⚠️ Errors detected in output\n"})
             return False
             
     except Exception as e:
+        logger.error(f"Conversion error: {type(e).__name__}: {str(e)}")
         await broadcast_message({"type": "output", "data": f"❌ Error: {type(e).__name__}: {str(e)}\n"})
         return False
 
@@ -1367,7 +1394,17 @@ async def run_scheduler():
 @app.on_event("startup")
 async def startup_event():
     """Initialize scheduler on startup."""
+    logger.info("="*50)
+    logger.info("DoVi Convert Web Interface starting up")
+    logger.info(f"Media path: {MEDIA_PATH}")
+    logger.info(f"Config path: {CONFIG_PATH}")
+    logger.info(f"Scan path (from settings): {state.settings.get('scan_path', MEDIA_PATH)}")
+    logger.info(f"Cached files: {len(state.scan_cache.get('files', {}))}")
+    logger.info(f"Conversion history: {len(state.conversion_history)} entries")
+    logger.info("="*50)
+    
     if state.settings.get("schedule_enabled"):
+        logger.info("Scheduled scans enabled - starting scheduler")
         setup_scheduled_scan()
 
 
