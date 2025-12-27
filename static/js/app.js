@@ -88,6 +88,7 @@ class DoViConvertApp {
         this.toggleApiKeyBtn = getEl('toggleApiKey');
         this.testJellyfinBtn = getEl('testJellyfin');
         this.jellyfinStatus = getEl('jellyfinStatus');
+        this.jellyfinConnectionBadge = getEl('jellyfinConnectionBadge');
         
         // Schedule
         this.enableScheduleCheckbox = getEl('enableSchedule');
@@ -162,9 +163,22 @@ class DoViConvertApp {
         addListener(this.useJellyfinCheckbox, 'change', () => {
             this.saveSettings();
             this.updateScanModeIndicator();
+            this.checkJellyfinConnection();
         });
-        addListener(this.jellyfinUrlInput, 'change', () => this.saveSettings());
-        addListener(this.jellyfinApiKeyInput, 'change', () => this.saveSettings());
+        addListener(this.jellyfinUrlInput, 'change', () => {
+            this.saveSettings();
+            // Re-check connection after URL change
+            if (this.useJellyfinCheckbox?.checked) {
+                this.checkJellyfinConnection();
+            }
+        });
+        addListener(this.jellyfinApiKeyInput, 'change', () => {
+            this.saveSettings();
+            // Re-check connection after API key change
+            if (this.useJellyfinCheckbox?.checked) {
+                this.checkJellyfinConnection();
+            }
+        });
         addListener(this.toggleApiKeyBtn, 'click', () => this.toggleApiKeyVisibility());
         addListener(this.testJellyfinBtn, 'click', () => this.testJellyfinConnection());
         
@@ -1038,6 +1052,9 @@ class DoViConvertApp {
             const response = await fetch('/api/settings');
             const settings = await response.json();
             this.applySettings(settings);
+            
+            // Check Jellyfin connection status after settings are loaded
+            this.checkJellyfinConnection();
         } catch (error) {
             console.error('Failed to load settings:', error);
         }
@@ -1161,38 +1178,87 @@ class DoViConvertApp {
         }
     }
     
-    async testJellyfinConnection() {
-        if (!this.jellyfinStatus) return;
-        
+    async testJellyfinConnection(silent = false) {
         const url = this.jellyfinUrlInput?.value;
         const apiKey = this.jellyfinApiKeyInput?.value;
         
         if (!url || !apiKey) {
-            this.jellyfinStatus.className = 'jellyfin-status error';
-            this.jellyfinStatus.textContent = 'Please enter URL and API key';
+            this.updateJellyfinBadge('error', 'Not configured');
+            if (!silent && this.jellyfinStatus) {
+                this.jellyfinStatus.className = 'jellyfin-status error';
+                this.jellyfinStatus.textContent = 'Please enter URL and API key';
+            }
             return;
         }
         
-        await this.saveSettings();
+        // Save settings if not a silent check
+        if (!silent) {
+            await this.saveSettings();
+        }
         
-        this.jellyfinStatus.className = 'jellyfin-status testing';
-        this.jellyfinStatus.textContent = 'Testing connection...';
+        // Update UI to show testing
+        this.updateJellyfinBadge('checking', 'Checking...');
+        if (!silent && this.jellyfinStatus) {
+            this.jellyfinStatus.className = 'jellyfin-status testing';
+            this.jellyfinStatus.textContent = 'Testing connection...';
+        }
         
         try {
             const response = await fetch('/api/jellyfin/test', { method: 'POST' });
             const data = await response.json();
             
             if (response.ok && data.success) {
-                this.jellyfinStatus.className = 'jellyfin-status success';
-                this.jellyfinStatus.textContent = `✓ Connected to ${data.server_name} (v${data.version})`;
+                const serverInfo = `${data.server_name} v${data.version}`;
+                this.updateJellyfinBadge('connected', `Connected: ${data.server_name}`);
+                if (!silent && this.jellyfinStatus) {
+                    this.jellyfinStatus.className = 'jellyfin-status success';
+                    this.jellyfinStatus.textContent = `✓ Connected to ${serverInfo}`;
+                }
             } else {
-                this.jellyfinStatus.className = 'jellyfin-status error';
-                this.jellyfinStatus.textContent = `✗ ${data.detail || 'Connection failed'}`;
+                this.updateJellyfinBadge('error', 'Connection failed');
+                if (!silent && this.jellyfinStatus) {
+                    this.jellyfinStatus.className = 'jellyfin-status error';
+                    this.jellyfinStatus.textContent = `✗ ${data.detail || 'Connection failed'}`;
+                }
             }
         } catch (error) {
-            this.jellyfinStatus.className = 'jellyfin-status error';
-            this.jellyfinStatus.textContent = `✗ ${error.message}`;
+            this.updateJellyfinBadge('error', 'Connection error');
+            if (!silent && this.jellyfinStatus) {
+                this.jellyfinStatus.className = 'jellyfin-status error';
+                this.jellyfinStatus.textContent = `✗ ${error.message}`;
+            }
         }
+    }
+    
+    updateJellyfinBadge(status, text) {
+        if (!this.jellyfinConnectionBadge) return;
+        
+        const dot = this.jellyfinConnectionBadge.querySelector('.connection-dot');
+        const textEl = this.jellyfinConnectionBadge.querySelector('.connection-text');
+        
+        // Remove all status classes
+        this.jellyfinConnectionBadge.classList.remove('connected', 'checking', 'error', 'disabled');
+        
+        // Add the appropriate class
+        if (status) {
+            this.jellyfinConnectionBadge.classList.add(status);
+        }
+        
+        // Update text
+        if (textEl && text) {
+            textEl.textContent = text;
+        }
+    }
+    
+    async checkJellyfinConnection() {
+        // Only check if Jellyfin is enabled
+        if (!this.useJellyfinCheckbox?.checked) {
+            this.updateJellyfinBadge('disabled', 'Disabled');
+            return;
+        }
+        
+        // Silent check - doesn't show the detailed status message
+        await this.testJellyfinConnection(true);
     }
     
     async startScan() {

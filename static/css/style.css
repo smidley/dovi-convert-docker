@@ -688,12 +688,114 @@ body::before {
     font-size: 0.75rem;
 }
 
+/* Jellyfin Section Header */
+.settings-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-sm);
+}
+
+.settings-section-header .settings-section-title {
+    margin-bottom: 0;
+}
+
+/* Jellyfin Connection Badge */
+.jellyfin-connection-badge {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    font-size: 0.75rem;
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-full);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    transition: all 0.3s ease;
+}
+
+.jellyfin-connection-badge .connection-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    transition: all 0.3s ease;
+}
+
+.jellyfin-connection-badge .connection-text {
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+}
+
+/* Connected state */
+.jellyfin-connection-badge.connected {
+    background: rgba(0, 212, 170, 0.1);
+    border-color: rgba(0, 212, 170, 0.3);
+}
+
+.jellyfin-connection-badge.connected .connection-dot {
+    background: var(--accent-secondary);
+    box-shadow: 0 0 8px var(--accent-secondary);
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.jellyfin-connection-badge.connected .connection-text {
+    color: var(--accent-secondary);
+}
+
+/* Checking state */
+.jellyfin-connection-badge.checking {
+    background: rgba(163, 89, 217, 0.1);
+    border-color: rgba(163, 89, 217, 0.3);
+}
+
+.jellyfin-connection-badge.checking .connection-dot {
+    background: #a359d9;
+    animation: pulse-dot 0.5s ease-in-out infinite;
+}
+
+.jellyfin-connection-badge.checking .connection-text {
+    color: #a359d9;
+}
+
+/* Error state */
+.jellyfin-connection-badge.error {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+.jellyfin-connection-badge.error .connection-dot {
+    background: var(--accent-danger);
+}
+
+.jellyfin-connection-badge.error .connection-text {
+    color: var(--accent-danger);
+}
+
+/* Disabled state */
+.jellyfin-connection-badge.disabled {
+    opacity: 0.5;
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.2); }
+}
+
+/* Jellyfin Actions Row */
+.jellyfin-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    flex-wrap: wrap;
+}
+
 .jellyfin-status {
     font-size: 0.8125rem;
     padding: var(--space-sm) var(--space-md);
     border-radius: var(--radius-sm);
     display: none;
-    margin-top: var(--space-sm);
 }
 
 .jellyfin-status.success {

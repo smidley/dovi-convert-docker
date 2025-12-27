@@ -355,12 +355,18 @@
                     </div>
                     
                     <div class="settings-section jellyfin-section">
-                        <h3 class="settings-section-title">
-                            <svg class="jellyfin-icon" width="16" height="16" viewBox="0 0 512 512">
-                                <path fill="currentColor" d="M256 0C114.6 0 0 114.6 0 256s114.6 256 256 256 256-114.6 256-256S397.4 0 256 0zm0 64c35.3 0 64 28.7 64 64s-28.7 64-64 64-64-28.7-64-64 28.7-64 64-64zm0 384c-70.7 0-128-57.3-128-128 0-35.3 28.7-64 64-64h128c35.3 0 64 28.7 64 64 0 70.7-57.3 128-128 128z"/>
-                            </svg>
-                            Jellyfin Integration
-                        </h3>
+                        <div class="settings-section-header">
+                            <h3 class="settings-section-title">
+                                <svg class="jellyfin-icon" width="16" height="16" viewBox="0 0 512 512">
+                                    <path fill="currentColor" d="M256 0C114.6 0 0 114.6 0 256s114.6 256 256 256 256-114.6 256-256S397.4 0 256 0zm0 64c35.3 0 64 28.7 64 64s-28.7 64-64 64-64-28.7-64-64 28.7-64 64-64zm0 384c-70.7 0-128-57.3-128-128 0-35.3 28.7-64 64-64h128c35.3 0 64 28.7 64 64 0 70.7-57.3 128-128 128z"/>
+                                </svg>
+                                Jellyfin Integration
+                            </h3>
+                            <div class="jellyfin-connection-badge" id="jellyfinConnectionBadge">
+                                <span class="connection-dot"></span>
+                                <span class="connection-text">Not configured</span>
+                            </div>
+                        </div>
                         
                         <p class="setting-description">
                             Use Jellyfin's pre-indexed media database for instant scanning. 
@@ -392,8 +398,10 @@
                                 </div>
                             </div>
                             
-                            <button class="btn btn-secondary" id="testJellyfin">Test Connection</button>
-                            <div class="jellyfin-status" id="jellyfinStatus"></div>
+                            <div class="jellyfin-actions">
+                                <button class="btn btn-secondary" id="testJellyfin">Test Connection</button>
+                                <div class="jellyfin-status" id="jellyfinStatus"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
