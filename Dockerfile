@@ -12,6 +12,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     mediainfo \
     mkvtoolnix \
+    # Required by dovi_convert script
+    jq \
+    bc \
     # Networking tools
     curl \
     wget \
