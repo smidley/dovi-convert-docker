@@ -1097,21 +1097,37 @@ async def run_convert(files: List[str] = None):
                                                     file_num=i, total_files=total, filename=filename)
                 
                 if success:
-                    conversion_results.append({"file": filename, "status": "success"})
-                    state.add_to_history(filename, "success", log_id)
-                    await broadcast_message({"type": "output", "data": f"\n✅ {filename} - CONVERTED SUCCESSFULLY\n"})
+                    # Verify conversion by checking for backup file
+                    backup_path = actual_filepath + ".bak.dovi_convert"
+                    backup_exists = Path(backup_path).exists()
                     
-                    # Update cache - file was converted (update both original and actual path)
-                    if filepath in state.scan_cache.get("files", {}):
-                        state.scan_cache["files"][filepath]["profile"] = "profile8"
-                    if actual_filepath != filepath and actual_filepath in state.scan_cache.get("files", {}):
-                        state.scan_cache["files"][actual_filepath]["profile"] = "profile8"
-                    state.save_scan_cache()
-                    
-                    # Refresh Jellyfin metadata if Jellyfin integration is enabled
-                    if state.settings.get("use_jellyfin"):
-                        await refresh_jellyfin_item(actual_filepath)
-                else:
+                    if backup_exists:
+                        logger.info(f"Backup file verified: {backup_path}")
+                        conversion_results.append({"file": filename, "status": "success"})
+                        state.add_to_history(filename, "success", log_id)
+                        await broadcast_message({"type": "output", "data": f"\n✅ {filename} - CONVERTED SUCCESSFULLY\n"})
+                        await broadcast_message({"type": "output", "data": f"📦 Backup created: {Path(backup_path).name}\n"})
+                        
+                        # Update cache - file was converted (update both original and actual path)
+                        if filepath in state.scan_cache.get("files", {}):
+                            state.scan_cache["files"][filepath]["profile"] = "profile8"
+                        if actual_filepath != filepath and actual_filepath in state.scan_cache.get("files", {}):
+                            state.scan_cache["files"][actual_filepath]["profile"] = "profile8"
+                        state.save_scan_cache()
+                        
+                        # Refresh Jellyfin metadata if Jellyfin integration is enabled
+                        if state.settings.get("use_jellyfin"):
+                            await refresh_jellyfin_item(actual_filepath)
+                    else:
+                        # Command reported success but no backup = didn't actually convert
+                        logger.warning(f"No backup file found at {backup_path} - conversion may not have occurred")
+                        success = False
+                        conversion_results.append({"file": filename, "status": "failed"})
+                        state.add_to_history(filename, "failed", log_id)
+                        await broadcast_message({"type": "output", "data": f"\n⚠️ {filename} - NO BACKUP FILE CREATED\n"})
+                        await broadcast_message({"type": "output", "data": f"💡 dovi_convert may have skipped this file (not Profile 7?) or failed silently\n"})
+                
+                if not success:
                     conversion_results.append({"file": filename, "status": "failed"})
                     state.add_to_history(filename, "failed", log_id)
                     await broadcast_message({"type": "output", "data": f"\n❌ {filename} - CONVERSION FAILED\n"})
@@ -1314,12 +1330,17 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         
         # Check if output looks like just usage info (script didn't actually run)
         output_text = ''.join(output_lines)
+        output_line_count = len(output_lines)
         is_just_usage = 'Usage:' in output_text and 'dovi_convert -' in output_text and not saw_success
+        is_empty_output = output_line_count == 0 or len(output_text.strip()) == 0
         
-        logger.info(f"Output analysis - saw_error: {saw_error}, saw_success: {saw_success}, is_just_usage: {is_just_usage}")
+        logger.info(f"Output analysis - lines: {output_line_count}, saw_error: {saw_error}, saw_success: {saw_success}, is_just_usage: {is_just_usage}, is_empty: {is_empty_output}")
+        if output_line_count > 0:
+            logger.info(f"First line of output: {output_lines[0][:100] if output_lines else 'N/A'}")
         
         # Determine success based on exit code AND output content
-        if process.returncode == 0 and not saw_error and not is_just_usage:
+        # Empty output is suspicious - script should produce SOMETHING
+        if process.returncode == 0 and not saw_error and not is_just_usage and not is_empty_output:
             logger.info(f"Conversion SUCCESS: {filename}")
             await broadcast_message({
                 "type": "progress",
@@ -1335,8 +1356,12 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             })
             return True
         else:
-            logger.warning(f"Conversion FAILED: {filename} - exit_code={process.returncode}, saw_error={saw_error}, is_just_usage={is_just_usage}")
-            if is_just_usage:
+            logger.warning(f"Conversion FAILED: {filename} - exit_code={process.returncode}, saw_error={saw_error}, is_just_usage={is_just_usage}, is_empty={is_empty_output}")
+            if is_empty_output:
+                logger.warning("Script produced no output - command may not have executed properly")
+                await broadcast_message({"type": "output", "data": "\n⚠️ dovi_convert produced no output - script may not have executed\n"})
+                await broadcast_message({"type": "output", "data": "💡 Check that dovi_convert is properly installed in the container\n"})
+            elif is_just_usage:
                 logger.warning("Script showed usage info without converting - possible command format issue")
                 await broadcast_message({"type": "output", "data": "\n⚠️ dovi_convert showed usage info but didn't convert - check command format\n"})
             elif saw_error:
