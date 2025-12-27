@@ -8,6 +8,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Bash shell (required by dovi_convert script)
+    bash \
     # FFmpeg and multimedia tools
     ffmpeg \
     mediainfo \
