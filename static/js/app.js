@@ -15,6 +15,11 @@ class DoViConvertApp {
         this.logHistory = [];
         this.maxLogLines = 1000;
         
+        // Pagination state
+        this.allResults = null;
+        this.currentResultsPage = 1;
+        this.resultsPerPage = 20;
+        
         console.log('Initializing elements...');
         this.initElements();
         console.log('Initializing event listeners...');
@@ -136,6 +141,12 @@ class DoViConvertApp {
         document.querySelectorAll('.control-tab-btn').forEach(btn => {
             btn.addEventListener('click', () => this.switchControlTab(btn.dataset.controlTab));
         });
+        
+        // Pagination
+        const prevBtn = document.getElementById('prevPage');
+        const nextBtn = document.getElementById('nextPage');
+        if (prevBtn) prevBtn.addEventListener('click', () => this.goToPage(this.currentResultsPage - 1));
+        if (nextBtn) nextBtn.addEventListener('click', () => this.goToPage(this.currentResultsPage + 1));
     }
     
     switchControlTab(tabName) {
@@ -358,10 +369,13 @@ class DoViConvertApp {
     
     displayResults(results) {
         const summary = document.getElementById('resultsSummary');
-        const list = document.getElementById('resultsList');
         const countBadge = document.getElementById('resultCount');
         
-        if (!summary || !list) return;
+        if (!summary) return;
+        
+        // Store results for pagination
+        this.allResults = results;
+        this.currentResultsPage = 1;
         
         const profile7 = results.profile7 || [];
         const profile8 = results.profile8 || [];
@@ -393,48 +407,99 @@ class DoViConvertApp {
             </div>
         `;
         
-        // Update list
-        list.innerHTML = '';
-        
-        if (profile7.length === 0 && profile8.length === 0) {
-            list.innerHTML = '<p class="no-results">No Dolby Vision files found.</p>';
-            return;
-        }
-        
-        // Show Profile 7 files first (need conversion)
-        profile7.forEach(file => {
-            const item = document.createElement('div');
-            item.className = 'result-item';
-            item.innerHTML = `
-                <div class="file-info">
-                    <div class="file-name" title="${file.name}">${file.name}</div>
-                    <div class="file-meta">${file.hdr}</div>
-                </div>
-                <div class="file-action">
-                    <span class="badge convert">Needs Conversion</span>
-                </div>
-            `;
-            list.appendChild(item);
-        });
-        
-        // Show Profile 8 files (already compatible)
-        profile8.forEach(file => {
-            const item = document.createElement('div');
-            item.className = 'result-item';
-            item.innerHTML = `
-                <div class="file-info">
-                    <div class="file-name" title="${file.name}">${file.name}</div>
-                    <div class="file-meta">${file.hdr}</div>
-                </div>
-                <div class="file-action">
-                    <span class="badge compatible">Compatible</span>
-                </div>
-            `;
-            list.appendChild(item);
-        });
+        // Render the first page
+        this.renderResultsPage();
         
         // Switch to results tab
         this.switchTab('results');
+    }
+    
+    renderResultsPage() {
+        const list = document.getElementById('resultsList');
+        const pagination = document.getElementById('pagination');
+        const prevBtn = document.getElementById('prevPage');
+        const nextBtn = document.getElementById('nextPage');
+        const currentPageEl = document.getElementById('currentPage');
+        const totalPagesEl = document.getElementById('totalPages');
+        
+        if (!list || !this.allResults) return;
+        
+        const profile7 = this.allResults.profile7 || [];
+        const profile8 = this.allResults.profile8 || [];
+        
+        // Combine all DV files for pagination
+        const allFiles = [
+            ...profile7.map(f => ({ ...f, type: 'convert' })),
+            ...profile8.map(f => ({ ...f, type: 'compatible' }))
+        ];
+        
+        const totalItems = allFiles.length;
+        const totalPages = Math.ceil(totalItems / this.resultsPerPage);
+        
+        // Ensure current page is valid
+        if (this.currentResultsPage > totalPages) this.currentResultsPage = totalPages;
+        if (this.currentResultsPage < 1) this.currentResultsPage = 1;
+        
+        // Calculate slice indices
+        const startIndex = (this.currentResultsPage - 1) * this.resultsPerPage;
+        const endIndex = Math.min(startIndex + this.resultsPerPage, totalItems);
+        const pageItems = allFiles.slice(startIndex, endIndex);
+        
+        // Clear and render list
+        list.innerHTML = '';
+        
+        if (totalItems === 0) {
+            list.innerHTML = '<p class="no-results">No Dolby Vision files found.</p>';
+            if (pagination) pagination.style.display = 'none';
+            return;
+        }
+        
+        pageItems.forEach(file => {
+            const item = document.createElement('div');
+            item.className = 'result-item';
+            const badgeClass = file.type === 'convert' ? 'convert' : 'compatible';
+            const badgeText = file.type === 'convert' ? 'Needs Conversion' : 'Compatible';
+            
+            item.innerHTML = `
+                <div class="file-info">
+                    <div class="file-name" title="${file.name}">${file.name}</div>
+                    <div class="file-meta">${file.hdr || file.profile || 'Dolby Vision'}</div>
+                </div>
+                <div class="file-action">
+                    <span class="badge ${badgeClass}">${badgeText}</span>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+        
+        // Update pagination controls
+        if (pagination) {
+            if (totalPages > 1) {
+                pagination.style.display = 'flex';
+                if (currentPageEl) currentPageEl.textContent = this.currentResultsPage;
+                if (totalPagesEl) totalPagesEl.textContent = totalPages;
+                if (prevBtn) prevBtn.disabled = this.currentResultsPage <= 1;
+                if (nextBtn) nextBtn.disabled = this.currentResultsPage >= totalPages;
+            } else {
+                pagination.style.display = 'none';
+            }
+        }
+    }
+    
+    goToPage(page) {
+        const profile7 = this.allResults?.profile7 || [];
+        const profile8 = this.allResults?.profile8 || [];
+        const totalItems = profile7.length + profile8.length;
+        const totalPages = Math.ceil(totalItems / this.resultsPerPage);
+        
+        if (page >= 1 && page <= totalPages) {
+            this.currentResultsPage = page;
+            this.renderResultsPage();
+            
+            // Scroll results list to top
+            const list = document.getElementById('resultsList');
+            if (list) list.scrollTop = 0;
+        }
     }
     
     switchTab(tabName) {

@@ -914,6 +914,39 @@ body::before {
     color: var(--accent-secondary);
 }
 
+/* Pagination */
+.pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-md);
+    padding: var(--space-md);
+    background: var(--surface-1);
+    border-top: 1px solid var(--border-color);
+}
+
+.page-info {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    min-width: 120px;
+    text-align: center;
+}
+
+.page-info span {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.pagination .btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.pagination .btn:disabled {
+    opacity: 0.4;
+}
+
 .terminal {
     flex: 1;
     min-height: 500px;

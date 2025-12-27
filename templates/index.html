@@ -222,6 +222,23 @@
                             <p class="no-results">No scan results yet. Run a scan to find Dolby Vision files.</p>
                         </div>
                         <div class="results-list" id="resultsList"></div>
+                        <div class="pagination" id="pagination" style="display: none;">
+                            <button class="btn btn-secondary btn-small" id="prevPage" disabled>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="15 18 9 12 15 6"></polyline>
+                                </svg>
+                                Previous
+                            </button>
+                            <span class="page-info">
+                                Page <span id="currentPage">1</span> of <span id="totalPages">1</span>
+                            </span>
+                            <button class="btn btn-secondary btn-small" id="nextPage" disabled>
+                                Next
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="9 18 15 12 9 6"></polyline>
+                                </svg>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </section>
