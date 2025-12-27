@@ -44,6 +44,8 @@ class DoViConvertApp {
         this.checkServerStatus();
         console.log('Loading stats...');
         this.loadStats();
+        console.log('Loading cached results...');
+        this.loadCachedResults();
         console.log('Constructor complete');
     }
 
@@ -412,6 +414,30 @@ class DoViConvertApp {
             }
         } catch (error) {
             console.error('Failed to load stats:', error);
+        }
+    }
+    
+    async loadCachedResults() {
+        try {
+            const response = await fetch('/api/results');
+            if (response.ok) {
+                const data = await response.json();
+                if (data.results) {
+                    console.log('Restoring cached results:', data);
+                    this.displayResults(data.results);
+                    
+                    // Update last scan time display if available
+                    if (data.last_scan) {
+                        const lastScanEl = document.getElementById('lastScanTime');
+                        if (lastScanEl) {
+                            const scanDate = new Date(data.last_scan);
+                            lastScanEl.textContent = `Last scan: ${scanDate.toLocaleString()}`;
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Failed to load cached results:', error);
         }
     }
     

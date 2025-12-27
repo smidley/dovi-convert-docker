@@ -268,6 +268,46 @@ async def get_stats():
     }
 
 
+@app.get("/api/results")
+async def get_cached_results():
+    """Get cached scan results for display in results pane."""
+    files = state.scan_cache.get("files", {})
+    last_scan = state.scan_cache.get("last_scan")
+    
+    if not files:
+        return {"results": None, "last_scan": None}
+    
+    # Build results in the same format as scan results
+    dv_profile7_files = []
+    dv_profile8_files = []
+    
+    for filepath, data in files.items():
+        profile = data.get("profile")
+        if profile in ("profile7", "profile8"):
+            file_info = {
+                "path": filepath,
+                "name": Path(filepath).name,
+                "hdr": f"Dolby Vision Profile {'7' if profile == 'profile7' else '8'}",
+                "cached": True
+            }
+            if profile == "profile7":
+                dv_profile7_files.append(file_info)
+            else:
+                dv_profile8_files.append(file_info)
+    
+    # Only return results if there are DV files
+    if not dv_profile7_files and not dv_profile8_files:
+        return {"results": None, "last_scan": last_scan}
+    
+    return {
+        "results": {
+            "convert": dv_profile7_files,
+            "compatible": dv_profile8_files
+        },
+        "last_scan": last_scan
+    }
+
+
 @app.post("/api/backups/clean")
 async def clean_backups():
     """Delete all backup files."""
