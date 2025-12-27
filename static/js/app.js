@@ -563,6 +563,15 @@ class DoViConvertApp {
     
     connectWebSocket() {
         try {
+            // Close existing connection first to prevent duplicates
+            if (this.ws) {
+                try {
+                    this.ws.onclose = null; // Prevent reconnect loop
+                    this.ws.close();
+                } catch (e) {}
+                this.ws = null;
+            }
+            
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
             
