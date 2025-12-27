@@ -1101,6 +1101,8 @@ async def run_convert(files: List[str] = None):
                 cmd = ["/usr/local/bin/dovi_convert", "-convert", actual_filepath]
                 if safe_mode:
                     cmd.append("-safe")
+                if include_simple:
+                    cmd.append("-include-simple")
                 cmd.append("-y")
                 
                 # Run command and track result
