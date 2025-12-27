@@ -1053,10 +1053,10 @@ async def run_convert(files: List[str] = None):
                 await broadcast_message({"type": "output", "data": f"📁 Path: {actual_filepath}\n"})
                 await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
                 
-                cmd = ["/usr/local/bin/dovi_convert", "-y"]
+                cmd = ["/usr/local/bin/dovi_convert", "-convert", actual_filepath]
                 if safe_mode:
                     cmd.append("-safe")
-                cmd.append(actual_filepath)
+                cmd.append("-y")
                 
                 # Run command and track result
                 success = await run_convert_command(cmd, cwd=str(Path(actual_filepath).parent), 
