@@ -173,6 +173,26 @@ body::before {
     border: 1px solid rgba(250, 204, 21, 0.3);
 }
 
+.status-indicator.disconnected .status-dot {
+    background: var(--accent-danger);
+    box-shadow: 0 0 10px var(--accent-danger);
+    animation: status-pulse-disconnected 1.5s ease-in-out infinite;
+}
+
+.status-indicator.disconnected {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.status-indicator.disconnected .status-text {
+    color: var(--accent-danger);
+}
+
+@keyframes status-pulse-disconnected {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
 @keyframes status-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }

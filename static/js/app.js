@@ -46,6 +46,21 @@ class DoViConvertApp {
         this.loadStats();
         console.log('Loading cached results...');
         this.loadCachedResults();
+        
+        // Refresh when tab becomes visible again
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                console.log('Tab visible, refreshing...');
+                this.checkServerStatus();
+                this.loadStats();
+                this.loadCachedResults();
+                // Reconnect WebSocket if needed
+                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                    this.connectWebSocket();
+                }
+            }
+        });
+        
         console.log('Constructor complete');
     }
 
@@ -598,10 +613,15 @@ class DoViConvertApp {
         
         this.ws.onopen = () => {
                 this.reconnectAttempts = 0;
+                this.setConnectionStatus(true);
                 if (this.terminalContent) {
                     this.appendToTerminal('🔗 Connected to server\n', 'system');
                 }
                 this.startKeepalive();
+                // Refresh data on reconnect
+                this.checkServerStatus();
+                this.loadStats();
+                this.loadCachedResults();
         };
         
         this.ws.onmessage = (event) => {
@@ -622,9 +642,11 @@ class DoViConvertApp {
             
             this.ws.onclose = (event) => {
                 this.stopKeepalive();
+                this.setConnectionStatus(false);
                 if (this.terminalContent) {
                     this.appendToTerminal(`⚠️ Disconnected (code: ${event.code})\n`, 'error');
                 }
+                this.startPollingFallback();
                 this.attemptReconnect();
         };
         
@@ -652,6 +674,50 @@ class DoViConvertApp {
         if (this.keepaliveInterval) {
             clearInterval(this.keepaliveInterval);
             this.keepaliveInterval = null;
+        }
+    }
+    
+    setConnectionStatus(connected) {
+        this.isConnected = connected;
+        const statusDot = this.statusIndicator?.querySelector('.status-dot');
+        
+        if (connected) {
+            this.statusIndicator?.classList.remove('disconnected');
+            this.stopPollingFallback();
+        } else {
+            this.statusIndicator?.classList.add('disconnected');
+            if (this.statusText && !this.isRunning) {
+                this.statusText.textContent = 'Disconnected';
+            }
+        }
+    }
+    
+    startPollingFallback() {
+        this.stopPollingFallback();
+        // Poll server status every 3 seconds when WebSocket is down
+        this.pollingInterval = setInterval(async () => {
+            try {
+                const response = await fetch('/api/status');
+                if (response.ok) {
+                    const status = await response.json();
+                    this.updateStatus(status.is_running, status.action);
+                    // If we're polling and server is not running, refresh results
+                    if (!status.is_running && this.wasRunning) {
+                        this.loadStats();
+                        this.loadCachedResults();
+                    }
+                    this.wasRunning = status.is_running;
+                }
+            } catch (e) {
+                console.log('Polling failed:', e);
+            }
+        }, 3000);
+    }
+    
+    stopPollingFallback() {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
         }
     }
 
