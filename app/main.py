@@ -498,7 +498,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def broadcast_message(message: dict):
+    msg_type = message.get("type", "unknown")
+    
     if not state.websocket_clients:
+        # Log important messages that would be missed
+        if msg_type in ("results", "conversion_complete", "status"):
+            logger.warning(f"No WebSocket clients to receive '{msg_type}' message")
         return
         
     disconnected = []
@@ -506,11 +511,13 @@ async def broadcast_message(message: dict):
         try:
             await client.send_json(message)
         except Exception as e:
+            logger.debug(f"Failed to send to WebSocket client: {e}")
             disconnected.append(client)
     
     for client in disconnected:
         if client in state.websocket_clients:
             state.websocket_clients.remove(client)
+            logger.info(f"Removed disconnected client. Remaining: {len(state.websocket_clients)}")
 
 
 async def refresh_jellyfin_item(filepath: str):
@@ -980,6 +987,9 @@ async def run_scan(incremental: bool = True):
                 await broadcast_message({"type": "output", "data": f"  📄 {f['name']}\n"})
             if len(dv_profile7_files) > 10:
                 await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
+        
+        logger.info(f"Scan complete - Profile 7: {len(dv_profile7_files)}, Profile 8: {len(dv_profile8_files)}, HDR10: {hdr10_count}, SDR: {sdr_count}")
+        logger.info(f"Broadcasting results to {len(state.websocket_clients)} WebSocket clients")
         
         await broadcast_message({
             "type": "results",

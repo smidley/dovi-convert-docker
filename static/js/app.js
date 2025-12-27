@@ -745,8 +745,19 @@ class DoViConvertApp {
                 this.addLogMarker(data.data.id, data.data.filename);
                 break;
             case 'results':
+                console.log('Received results via WebSocket:', data.data);
                 this.displayResults(data.data);
                 this.loadStats();
+                // Show notification that results were received
+                const profile7Count = data.data?.profile7?.length || 0;
+                const profile8Count = data.data?.profile8?.length || 0;
+                if (profile7Count > 0) {
+                    this.showPopup(`Scan complete: Found ${profile7Count} Profile 7 files`, 'success');
+                } else {
+                    this.showPopup(`Scan complete: No Profile 7 files found`, 'info');
+                }
+                // Switch to results tab
+                this.switchTab('results');
                 break;
             case 'progress':
                 this.updateProgress(data.data);
