@@ -638,6 +638,8 @@ class DoViConvertApp {
         
         if (progress.status === 'scanning' || progress.status === 'converting') {
             container.style.display = 'block';
+            // Remove indeterminate animation when we have real progress
+            fill.classList.remove('indeterminate');
             fill.style.width = `${progress.percent}%`;
             stats.textContent = `${progress.current} / ${progress.total}`;
             if (percent) percent.textContent = `${progress.percent}%`;
@@ -649,11 +651,15 @@ class DoViConvertApp {
                 detail.textContent += ` (ETA: ${progress.eta})`;
             }
         } else if (progress.status === 'complete') {
+            fill.classList.remove('indeterminate');
             fill.style.width = '100%';
             if (percent) percent.textContent = '100%';
             label.textContent = 'Complete!';
             detail.textContent = '✓ Finished successfully';
-            setTimeout(() => { container.style.display = 'none'; }, 3000);
+            setTimeout(() => { 
+                container.style.display = 'none';
+                fill.classList.remove('indeterminate');
+            }, 3000);
         }
     }
     
@@ -768,8 +774,8 @@ class DoViConvertApp {
                 </div>
                 <div class="file-action">
                     <span class="badge ${badgeClass}">${badgeText}</span>
-                </div>
-            `;
+            </div>
+        `;
             list.appendChild(item);
         });
         
@@ -813,12 +819,18 @@ class DoViConvertApp {
         if (running) {
             this.statusIndicator?.classList.add('running');
             if (this.statusText) this.statusText.textContent = action === 'scan' ? 'Scanning...' : 'Converting...';
-            if (this.scanBtn) this.scanBtn.disabled = true;
+            if (this.scanBtn) {
+                this.scanBtn.disabled = true;
+                this.scanBtn.classList.add('loading');
+            }
             if (this.stopBtn) this.stopBtn.disabled = false;
         } else {
             this.statusIndicator?.classList.remove('running');
             if (this.statusText) this.statusText.textContent = 'Ready';
-            if (this.scanBtn) this.scanBtn.disabled = false;
+            if (this.scanBtn) {
+                this.scanBtn.disabled = false;
+                this.scanBtn.classList.remove('loading');
+            }
             if (this.stopBtn) this.stopBtn.disabled = true;
         }
     }
@@ -984,6 +996,35 @@ class DoViConvertApp {
     async startScan() {
         this.clearTerminal();
         
+        // Show immediate visual feedback
+        if (this.scanBtn) {
+            this.scanBtn.classList.add('loading');
+            this.scanBtn.disabled = true;
+        }
+        
+        // Show progress bar immediately with "initializing" state
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressLabel = document.getElementById('progressLabel');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressDetail = document.getElementById('progressDetail');
+        const progressStats = document.getElementById('progressStats');
+        
+        if (progressContainer) {
+            progressContainer.style.display = 'block';
+            if (progressFill) {
+                progressFill.style.width = '30%';
+                progressFill.classList.add('indeterminate');
+            }
+            if (progressLabel) progressLabel.textContent = 'Initializing scan...';
+            if (progressPercent) progressPercent.textContent = '';
+            if (progressDetail) progressDetail.textContent = 'Connecting to server...';
+            if (progressStats) progressStats.textContent = '';
+        }
+        
+        // Switch to Log tab to show output
+        this.switchTab('output');
+        
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             this.appendToTerminal('🔌 Reconnecting WebSocket...\n', 'system');
             this.connectWebSocket();
@@ -1003,9 +1044,23 @@ class DoViConvertApp {
             
             if (!response.ok) {
                 this.appendToTerminal(`❌ Server error: ${data.detail || response.statusText}\n`, 'error');
+                // Reset button and hide progress on error
+                if (this.scanBtn) {
+                    this.scanBtn.classList.remove('loading');
+                    this.scanBtn.disabled = false;
+                }
+                if (progressContainer) progressContainer.style.display = 'none';
+                if (progressFill) progressFill.classList.remove('indeterminate');
             }
         } catch (error) {
             this.appendToTerminal(`❌ Failed to start scan: ${error.message}\n`, 'error');
+            // Reset button and hide progress on error
+            if (this.scanBtn) {
+                this.scanBtn.classList.remove('loading');
+                this.scanBtn.disabled = false;
+            }
+            if (progressContainer) progressContainer.style.display = 'none';
+            if (progressFill) progressFill.classList.remove('indeterminate');
         }
     }
     

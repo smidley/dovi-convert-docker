@@ -164,12 +164,31 @@ body::before {
 
 .status-indicator.running .status-dot {
     background: var(--accent-warning);
-    box-shadow: 0 0 10px var(--accent-warning);
+    box-shadow: 0 0 15px var(--accent-warning);
+    animation: status-pulse-active 0.8s ease-in-out infinite;
+}
+
+.status-indicator.running {
+    background: rgba(250, 204, 21, 0.15);
+    border: 1px solid rgba(250, 204, 21, 0.3);
 }
 
 @keyframes status-pulse {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
+}
+
+@keyframes status-pulse-active {
+    0%, 100% { 
+        opacity: 1; 
+        transform: scale(1);
+        box-shadow: 0 0 15px var(--accent-warning);
+    }
+    50% { 
+        opacity: 0.7; 
+        transform: scale(1.2);
+        box-shadow: 0 0 25px var(--accent-warning);
+    }
 }
 
 /* Main Content */
@@ -526,6 +545,38 @@ body::before {
     background: var(--surface-1);
 }
 
+/* Loading Button State */
+.btn.loading {
+    position: relative;
+    color: transparent !important;
+    pointer-events: none;
+}
+
+.btn.loading::after {
+    content: '';
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    top: 50%;
+    left: 50%;
+    margin-left: -10px;
+    margin-top: -10px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: white;
+    animation: spin 0.8s linear infinite;
+}
+
+.btn.loading svg {
+    visibility: hidden;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 .btn-large {
     padding: var(--space-md) var(--space-lg);
     font-size: 1rem;
@@ -723,6 +774,24 @@ body::before {
         transparent
     );
     animation: progress-shine 1.2s infinite;
+}
+
+/* Indeterminate progress bar animation */
+.progress-fill.indeterminate {
+    width: 30% !important;
+    animation: progress-indeterminate 1.5s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+    0% {
+        margin-left: 0%;
+    }
+    50% {
+        margin-left: 70%;
+    }
+    100% {
+        margin-left: 0%;
+    }
 }
 
 @keyframes progress-shine {
