@@ -32,6 +32,25 @@
                             </svg>
                             Actions
                         </button>
+                        <button class="control-tab-btn" data-control-tab="queue">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="8" y1="6" x2="21" y2="6"></line>
+                                <line x1="8" y1="12" x2="21" y2="12"></line>
+                                <line x1="8" y1="18" x2="21" y2="18"></line>
+                                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+                            </svg>
+                            Queue <span class="badge-count" id="queueCount" style="display:none">0</span>
+                        </button>
+                        <button class="control-tab-btn" data-control-tab="stats">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"></line>
+                                <line x1="12" y1="20" x2="12" y2="4"></line>
+                                <line x1="6" y1="20" x2="6" y2="14"></line>
+                            </svg>
+                            Stats
+                        </button>
                         <button class="control-tab-btn" data-control-tab="settings">
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="3"></circle>
@@ -57,11 +76,11 @@
                             </svg>
                             Scan for DV Files
                         </button>
-                        <button class="btn btn-accent btn-large" id="convertBtn">
+                        <button class="btn btn-accent btn-large" id="convertBtn" disabled>
                             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <polygon points="5 3 19 12 5 21 5 3"></polygon>
                             </svg>
-                            Start Conversion
+                            Convert Selected (<span id="selectedCount">0</span>)
                         </button>
                         <button class="btn btn-danger" id="stopBtn" disabled>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -84,6 +103,128 @@
                             <div class="progress-fill" id="progressFill" style="width: 0%"></div>
                         </div>
                         <div class="progress-detail" id="progressDetail">Waiting to start...</div>
+                    </div>
+                    
+                    <!-- Scan Options -->
+                    <div class="scan-options">
+                        <label class="checkbox-inline">
+                            <input type="checkbox" id="incrementalScan" checked>
+                            <span>Incremental scan (skip unchanged files)</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Queue Tab -->
+                <div class="control-tab-content" id="queueTab">
+                    <div class="queue-header">
+                        <h3>Conversion Queue</h3>
+                        <button class="btn btn-ghost btn-small" id="clearQueueBtn" title="Clear queue">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18"></path>
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="queue-list" id="queueList">
+                        <p class="empty-queue">No files in queue. Select files from Results to add them.</p>
+                    </div>
+                    <div class="queue-actions">
+                        <button class="btn btn-accent" id="startQueueBtn" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                            </svg>
+                            Start Queue
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Stats Tab -->
+                <div class="control-tab-content" id="statsTab">
+                    <div class="stats-dashboard">
+                        <h3 class="stats-title">Library Overview</h3>
+                        <div class="stats-grid">
+                            <div class="stat-card">
+                                <div class="stat-icon profile7">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <line x1="12" y1="8" x2="12" y2="12"></line>
+                                        <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                                    </svg>
+                                </div>
+                                <div class="stat-info">
+                                    <span class="stat-number" id="statProfile7">0</span>
+                                    <span class="stat-desc">Profile 7 (Need conversion)</span>
+                                </div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon profile8">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                        <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                                    </svg>
+                                </div>
+                                <div class="stat-info">
+                                    <span class="stat-number" id="statProfile8">0</span>
+                                    <span class="stat-desc">Profile 8 (Compatible)</span>
+                                </div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon hdr10">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="5"></circle>
+                                        <line x1="12" y1="1" x2="12" y2="3"></line>
+                                        <line x1="12" y1="21" x2="12" y2="23"></line>
+                                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                                        <line x1="1" y1="12" x2="3" y2="12"></line>
+                                        <line x1="21" y1="12" x2="23" y2="12"></line>
+                                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                                    </svg>
+                                </div>
+                                <div class="stat-info">
+                                    <span class="stat-number" id="statHdr10">0</span>
+                                    <span class="stat-desc">HDR10</span>
+                                </div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-icon sdr">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                                    </svg>
+                                </div>
+                                <div class="stat-info">
+                                    <span class="stat-number" id="statSdr">0</span>
+                                    <span class="stat-desc">SDR</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <h3 class="stats-title">Conversion History</h3>
+                        <div class="history-list" id="historyList">
+                            <p class="empty-history">No conversions yet.</p>
+                        </div>
+                        
+                        <h3 class="stats-title">Backup Management</h3>
+                        <div class="backup-info">
+                            <div class="backup-stat">
+                                <span class="backup-label">Backup files:</span>
+                                <span class="backup-value" id="backupCount">0</span>
+                            </div>
+                            <div class="backup-stat">
+                                <span class="backup-label">Disk space used:</span>
+                                <span class="backup-value" id="backupSize">0 MB</span>
+                            </div>
+                            <button class="btn btn-danger btn-small" id="cleanBackupsBtn">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M3 6h18"></path>
+                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                </svg>
+                                Clean Backups
+                            </button>
+                        </div>
                     </div>
                 </div>
                 
@@ -127,13 +268,49 @@
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="includeMovies" checked>
                             <label for="includeMovies">Include Movies</label>
-                            <span class="tooltip" title="Scan movie files">?</span>
                         </div>
                         
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="includeTvShows" checked>
                             <label for="includeTvShows">Include TV Shows</label>
-                            <span class="tooltip" title="Scan TV show episodes">?</span>
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3 class="settings-section-title">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <polyline points="12 6 12 12 16 14"></polyline>
+                            </svg>
+                            Scheduled Scans
+                        </h3>
+                        
+                        <div class="setting-item checkbox">
+                            <input type="checkbox" id="enableSchedule">
+                            <label for="enableSchedule">Enable scheduled scans</label>
+                        </div>
+                        
+                        <div class="schedule-config" id="scheduleConfig">
+                            <div class="setting-item">
+                                <label for="scheduleTime">Scan Time</label>
+                                <input type="time" id="scheduleTime" value="02:00">
+                            </div>
+                            <div class="setting-item">
+                                <label>Days</label>
+                                <div class="day-selector">
+                                    <label><input type="checkbox" name="scheduleDay" value="0"> Sun</label>
+                                    <label><input type="checkbox" name="scheduleDay" value="1"> Mon</label>
+                                    <label><input type="checkbox" name="scheduleDay" value="2"> Tue</label>
+                                    <label><input type="checkbox" name="scheduleDay" value="3"> Wed</label>
+                                    <label><input type="checkbox" name="scheduleDay" value="4"> Thu</label>
+                                    <label><input type="checkbox" name="scheduleDay" value="5"> Fri</label>
+                                    <label><input type="checkbox" name="scheduleDay" value="6" checked> Sat</label>
+                                </div>
+                            </div>
+                            <div class="setting-item checkbox">
+                                <input type="checkbox" id="autoConvert">
+                                <label for="autoConvert">Auto-convert Profile 7 files</label>
+                            </div>
                         </div>
                     </div>
                     
@@ -149,19 +326,17 @@
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="safeMode">
                             <label for="safeMode">Safe Mode</label>
-                            <span class="tooltip" title="Extract video to disk before converting (slower but more reliable)">?</span>
+                            <span class="tooltip" title="Extract video to disk before converting">?</span>
                         </div>
                         
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="includeSimple">
                             <label for="includeSimple">Include Simple FEL</label>
-                            <span class="tooltip" title="Auto-include Simple FEL files in batch conversion">?</span>
                         </div>
                         
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="autoCleanup">
-                            <label for="autoCleanup">Auto Cleanup</label>
-                            <span class="tooltip" title="Automatically delete backup files after conversion">?</span>
+                            <label for="autoCleanup">Auto Cleanup Backups</label>
                         </div>
                     </div>
                     
@@ -176,7 +351,6 @@
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="useJellyfin">
                             <label for="useJellyfin">Use Jellyfin for scanning</label>
-                            <span class="tooltip" title="Use Jellyfin's pre-indexed metadata instead of scanning files - instant results!">?</span>
                         </div>
                         
                         <div class="jellyfin-config" id="jellyfinConfig">
@@ -198,13 +372,7 @@
                                 </div>
                             </div>
                             
-                            <button class="btn btn-secondary" id="testJellyfin">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
-                                    <polyline points="22 4 12 14.01 9 11.01"></polyline>
-                                </svg>
-                                Test Connection
-                            </button>
+                            <button class="btn btn-secondary" id="testJellyfin">Test Connection</button>
                             <div class="jellyfin-status" id="jellyfinStatus"></div>
                         </div>
                     </div>
@@ -240,6 +408,47 @@
                 <!-- Results Tab -->
                 <div class="tab-content" id="resultsTab">
                     <div class="results-container">
+                        <!-- Search and Filter Bar -->
+                        <div class="results-toolbar">
+                            <div class="search-box">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <path d="m21 21-4.35-4.35"></path>
+                                </svg>
+                                <input type="text" id="searchResults" placeholder="Search files...">
+                            </div>
+                            <div class="filter-controls">
+                                <select id="filterProfile">
+                                    <option value="all">All Profiles</option>
+                                    <option value="profile7">Profile 7 Only</option>
+                                    <option value="profile8">Profile 8 Only</option>
+                                </select>
+                                <select id="sortResults">
+                                    <option value="name">Sort by Name</option>
+                                    <option value="type">Sort by Type</option>
+                                    <option value="size">Sort by Size</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Selection Controls -->
+                        <div class="selection-controls">
+                            <label class="checkbox-inline">
+                                <input type="checkbox" id="selectAll">
+                                <span>Select All</span>
+                            </label>
+                            <span class="selection-info">
+                                <span id="selectionCount">0</span> selected
+                            </span>
+                            <button class="btn btn-secondary btn-small" id="addToQueueBtn" disabled>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                                </svg>
+                                Add to Queue
+                            </button>
+                        </div>
+                        
                         <div class="results-summary" id="resultsSummary">
                             <p class="no-results">No scan results yet. Run a scan to find Dolby Vision files.</p>
                         </div>
@@ -276,9 +485,7 @@
                 </div>
                 <div class="modal-body">
                     <div class="current-path" id="currentPath">/media</div>
-                    <div class="directory-list" id="directoryList">
-                        <!-- Populated by JavaScript -->
-                    </div>
+                    <div class="directory-list" id="directoryList"></div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" id="modalCancel">Cancel</button>

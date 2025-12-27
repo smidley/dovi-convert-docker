@@ -17,8 +17,18 @@ class DoViConvertApp {
         
         // Pagination state
         this.allResults = null;
+        this.filteredResults = [];
         this.currentResultsPage = 1;
         this.resultsPerPage = 20;
+        
+        // Selection and queue
+        this.selectedFiles = new Set();
+        this.conversionQueue = [];
+        
+        // Search and filter state
+        this.searchTerm = '';
+        this.filterProfile = 'all';
+        this.sortBy = 'name';
         
         console.log('Initializing elements...');
         this.initElements();
@@ -32,16 +42,13 @@ class DoViConvertApp {
         this.restoreState();
         console.log('Checking server status...');
         this.checkServerStatus();
+        console.log('Loading stats...');
+        this.loadStats();
         console.log('Constructor complete');
     }
 
     initElements() {
-        // Helper to get element safely
-        const getEl = (id) => {
-            const el = document.getElementById(id);
-            if (!el) console.warn(`Element not found: ${id}`);
-            return el;
-        };
+        const getEl = (id) => document.getElementById(id);
         
         // Status
         this.statusIndicator = getEl('statusIndicator');
@@ -55,6 +62,7 @@ class DoViConvertApp {
         this.autoCleanupCheckbox = getEl('autoCleanup');
         this.includeMoviesCheckbox = getEl('includeMovies');
         this.includeTvShowsCheckbox = getEl('includeTvShows');
+        this.incrementalScanCheckbox = getEl('incrementalScan');
         
         // Jellyfin
         this.useJellyfinCheckbox = getEl('useJellyfin');
@@ -64,12 +72,27 @@ class DoViConvertApp {
         this.testJellyfinBtn = getEl('testJellyfin');
         this.jellyfinStatus = getEl('jellyfinStatus');
         
+        // Schedule
+        this.enableScheduleCheckbox = getEl('enableSchedule');
+        this.scheduleTimeInput = getEl('scheduleTime');
+        this.autoConvertCheckbox = getEl('autoConvert');
+        
         // Buttons
         this.browseBtn = getEl('browseBtn');
         this.scanBtn = getEl('scanBtn');
         this.convertBtn = getEl('convertBtn');
         this.stopBtn = getEl('stopBtn');
         this.clearBtn = getEl('clearBtn');
+        this.addToQueueBtn = getEl('addToQueueBtn');
+        this.clearQueueBtn = getEl('clearQueueBtn');
+        this.startQueueBtn = getEl('startQueueBtn');
+        this.cleanBackupsBtn = getEl('cleanBackupsBtn');
+        
+        // Search and filter
+        this.searchInput = getEl('searchResults');
+        this.filterSelect = getEl('filterProfile');
+        this.sortSelect = getEl('sortResults');
+        this.selectAllCheckbox = getEl('selectAll');
         
         // Terminal
         this.terminal = getEl('terminal');
@@ -85,7 +108,6 @@ class DoViConvertApp {
     }
 
     initEventListeners() {
-        // Helper to add event listener safely
         const addListener = (el, event, handler) => {
             if (el) el.addEventListener(event, handler);
         };
@@ -96,9 +118,15 @@ class DoViConvertApp {
         
         // Action buttons
         addListener(this.scanBtn, 'click', () => this.startScan());
-        addListener(this.convertBtn, 'click', () => this.startConvert());
+        addListener(this.convertBtn, 'click', () => this.convertSelected());
         addListener(this.stopBtn, 'click', () => this.stopProcess());
         addListener(this.clearBtn, 'click', () => this.clearTerminal());
+        
+        // Queue buttons
+        addListener(this.addToQueueBtn, 'click', () => this.addSelectedToQueue());
+        addListener(this.clearQueueBtn, 'click', () => this.clearQueue());
+        addListener(this.startQueueBtn, 'click', () => this.startQueue());
+        addListener(this.cleanBackupsBtn, 'click', () => this.cleanBackups());
         
         // Settings changes
         addListener(this.scanDepthInput, 'change', () => this.saveSettings());
@@ -107,6 +135,9 @@ class DoViConvertApp {
         addListener(this.autoCleanupCheckbox, 'change', () => this.saveSettings());
         addListener(this.includeMoviesCheckbox, 'change', () => this.saveSettings());
         addListener(this.includeTvShowsCheckbox, 'change', () => this.saveSettings());
+        addListener(this.enableScheduleCheckbox, 'change', () => this.saveSettings());
+        addListener(this.scheduleTimeInput, 'change', () => this.saveSettings());
+        addListener(this.autoConvertCheckbox, 'change', () => this.saveSettings());
         
         // Jellyfin settings
         addListener(this.useJellyfinCheckbox, 'change', () => {
@@ -117,6 +148,12 @@ class DoViConvertApp {
         addListener(this.jellyfinApiKeyInput, 'change', () => this.saveSettings());
         addListener(this.toggleApiKeyBtn, 'click', () => this.toggleApiKeyVisibility());
         addListener(this.testJellyfinBtn, 'click', () => this.testJellyfinConnection());
+        
+        // Search and filter
+        addListener(this.searchInput, 'input', () => this.handleSearch());
+        addListener(this.filterSelect, 'change', () => this.handleFilter());
+        addListener(this.sortSelect, 'change', () => this.handleSort());
+        addListener(this.selectAllCheckbox, 'change', () => this.toggleSelectAll());
         
         // Modal
         addListener(this.modalClose, 'click', () => this.closeModal());
@@ -151,6 +188,271 @@ class DoViConvertApp {
         const nextBtn = document.getElementById('nextPage');
         if (prevBtn) prevBtn.addEventListener('click', () => this.goToPage(this.currentResultsPage - 1));
         if (nextBtn) nextBtn.addEventListener('click', () => this.goToPage(this.currentResultsPage + 1));
+        
+        // Schedule day checkboxes
+        document.querySelectorAll('input[name="scheduleDay"]').forEach(cb => {
+            cb.addEventListener('change', () => this.saveSettings());
+        });
+    }
+    
+    // Search, Filter, Sort
+    handleSearch() {
+        this.searchTerm = this.searchInput?.value?.toLowerCase() || '';
+        this.applyFilters();
+    }
+    
+    handleFilter() {
+        this.filterProfile = this.filterSelect?.value || 'all';
+        this.applyFilters();
+    }
+    
+    handleSort() {
+        this.sortBy = this.sortSelect?.value || 'name';
+        this.applyFilters();
+    }
+    
+    applyFilters() {
+        if (!this.allResults) return;
+        
+        const profile7 = this.allResults.profile7 || [];
+        const profile8 = this.allResults.profile8 || [];
+        
+        // Combine and tag files
+        let allFiles = [
+            ...profile7.map(f => ({ ...f, type: 'convert', profileType: 'profile7' })),
+            ...profile8.map(f => ({ ...f, type: 'compatible', profileType: 'profile8' }))
+        ];
+        
+        // Filter by search term
+        if (this.searchTerm) {
+            allFiles = allFiles.filter(f => 
+                f.name?.toLowerCase().includes(this.searchTerm) ||
+                f.path?.toLowerCase().includes(this.searchTerm)
+            );
+        }
+        
+        // Filter by profile
+        if (this.filterProfile === 'profile7') {
+            allFiles = allFiles.filter(f => f.profileType === 'profile7');
+        } else if (this.filterProfile === 'profile8') {
+            allFiles = allFiles.filter(f => f.profileType === 'profile8');
+        }
+        
+        // Sort
+        allFiles.sort((a, b) => {
+            switch (this.sortBy) {
+                case 'type':
+                    return a.type.localeCompare(b.type);
+                case 'size':
+                    return (b.size || 0) - (a.size || 0);
+                default:
+                    return (a.name || '').localeCompare(b.name || '');
+            }
+        });
+        
+        this.filteredResults = allFiles;
+        this.currentResultsPage = 1;
+        this.renderResultsPage();
+    }
+    
+    // Selection
+    toggleSelectAll() {
+        const isChecked = this.selectAllCheckbox?.checked;
+        
+        if (isChecked) {
+            // Select all visible (filtered) results
+            this.filteredResults.forEach(f => {
+                if (f.path) this.selectedFiles.add(f.path);
+            });
+        } else {
+            this.selectedFiles.clear();
+        }
+        
+        this.renderResultsPage();
+        this.updateSelectionUI();
+    }
+    
+    toggleFileSelection(path, checked) {
+        if (checked) {
+            this.selectedFiles.add(path);
+        } else {
+            this.selectedFiles.delete(path);
+        }
+        this.updateSelectionUI();
+    }
+    
+    updateSelectionUI() {
+        const count = this.selectedFiles.size;
+        const countEl = document.getElementById('selectionCount');
+        const selectedCountEl = document.getElementById('selectedCount');
+        
+        if (countEl) countEl.textContent = count;
+        if (selectedCountEl) selectedCountEl.textContent = count;
+        
+        if (this.addToQueueBtn) this.addToQueueBtn.disabled = count === 0;
+        if (this.convertBtn) this.convertBtn.disabled = count === 0;
+        
+        // Update select all checkbox state
+        if (this.selectAllCheckbox && this.filteredResults.length > 0) {
+            const allSelected = this.filteredResults.every(f => this.selectedFiles.has(f.path));
+            const someSelected = this.filteredResults.some(f => this.selectedFiles.has(f.path));
+            this.selectAllCheckbox.checked = allSelected;
+            this.selectAllCheckbox.indeterminate = someSelected && !allSelected;
+        }
+    }
+    
+    // Queue Management
+    addSelectedToQueue() {
+        const profile7 = this.allResults?.profile7 || [];
+        
+        this.selectedFiles.forEach(path => {
+            const file = profile7.find(f => f.path === path);
+            if (file && !this.conversionQueue.some(q => q.path === path)) {
+                this.conversionQueue.push(file);
+            }
+        });
+        
+        this.selectedFiles.clear();
+        this.updateSelectionUI();
+        this.renderQueue();
+        this.renderResultsPage();
+        this.switchControlTab('queue');
+    }
+    
+    removeFromQueue(path) {
+        this.conversionQueue = this.conversionQueue.filter(f => f.path !== path);
+        this.renderQueue();
+    }
+    
+    clearQueue() {
+        this.conversionQueue = [];
+        this.renderQueue();
+    }
+    
+    renderQueue() {
+        const list = document.getElementById('queueList');
+        const countBadge = document.getElementById('queueCount');
+        const startBtn = this.startQueueBtn;
+        
+        if (countBadge) {
+            countBadge.textContent = this.conversionQueue.length;
+            countBadge.style.display = this.conversionQueue.length > 0 ? 'inline' : 'none';
+        }
+        
+        if (startBtn) {
+            startBtn.disabled = this.conversionQueue.length === 0;
+        }
+        
+        if (!list) return;
+        
+        if (this.conversionQueue.length === 0) {
+            list.innerHTML = '<p class="empty-queue">No files in queue. Select files from Results to add them.</p>';
+            return;
+        }
+        
+        list.innerHTML = this.conversionQueue.map((file, idx) => `
+            <div class="queue-item" data-path="${file.path}">
+                <span class="queue-number">${idx + 1}</span>
+                <span class="queue-name" title="${file.path}">${file.name}</span>
+                <span class="remove-btn" onclick="app.removeFromQueue('${file.path.replace(/'/g, "\\'")}')">✕</span>
+            </div>
+        `).join('');
+    }
+    
+    async startQueue() {
+        if (this.conversionQueue.length === 0) return;
+        
+        const paths = this.conversionQueue.map(f => f.path);
+        
+        try {
+            const response = await fetch('/api/convert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ files: paths })
+            });
+            
+            if (response.ok) {
+                this.appendToTerminal(`📦 Starting conversion of ${paths.length} files...\n`, 'system');
+                this.switchControlTab('actions');
+                this.switchTab('output');
+            }
+        } catch (error) {
+            this.appendToTerminal(`❌ Failed to start queue: ${error.message}\n`, 'error');
+        }
+    }
+    
+    async convertSelected() {
+        if (this.selectedFiles.size === 0) return;
+        
+        // Add selected to queue first
+        this.addSelectedToQueue();
+        // Then start queue
+        await this.startQueue();
+    }
+    
+    // Stats
+    async loadStats() {
+        try {
+            const response = await fetch('/api/stats');
+            if (response.ok) {
+                const stats = await response.json();
+                this.updateStatsDisplay(stats);
+            }
+        } catch (error) {
+            console.error('Failed to load stats:', error);
+        }
+    }
+    
+    updateStatsDisplay(stats) {
+        const setEl = (id, value) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = value;
+        };
+        
+        setEl('statProfile7', stats.profile7_count || 0);
+        setEl('statProfile8', stats.profile8_count || 0);
+        setEl('statHdr10', stats.hdr10_count || 0);
+        setEl('statSdr', stats.sdr_count || 0);
+        setEl('backupCount', stats.backup_count || 0);
+        setEl('backupSize', this.formatSize(stats.backup_size || 0));
+        
+        // Update history list
+        const historyList = document.getElementById('historyList');
+        if (historyList && stats.history) {
+            if (stats.history.length === 0) {
+                historyList.innerHTML = '<p class="empty-history">No conversions yet.</p>';
+            } else {
+                historyList.innerHTML = stats.history.slice(0, 10).map(h => `
+                    <div class="history-item">
+                        <span class="history-file">${h.filename}</span>
+                        <span class="history-date">${new Date(h.date).toLocaleDateString()}</span>
+                    </div>
+                `).join('');
+            }
+        }
+    }
+    
+    formatSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+    
+    async cleanBackups() {
+        if (!confirm('Delete all backup files? This cannot be undone.')) return;
+        
+        try {
+            const response = await fetch('/api/backups/clean', { method: 'POST' });
+            if (response.ok) {
+                const result = await response.json();
+                this.appendToTerminal(`🧹 Cleaned ${result.deleted} backup files (${this.formatSize(result.freed)} freed)\n`, 'system');
+                this.loadStats();
+            }
+        } catch (error) {
+            this.appendToTerminal(`❌ Failed to clean backups: ${error.message}\n`, 'error');
+        }
     }
     
     switchControlTab(tabName) {
@@ -164,6 +466,11 @@ class DoViConvertApp {
         contents.forEach(content => {
             content.classList.toggle('active', content.id === tabName + 'Tab');
         });
+        
+        // Refresh stats when switching to stats tab
+        if (tabName === 'stats') {
+            this.loadStats();
+        }
     }
     
     updateScanModeIndicator() {
@@ -191,7 +498,6 @@ class DoViConvertApp {
                 });
             });
             
-            // Close tooltip when clicking elsewhere
             document.addEventListener('click', () => {
                 const existing = document.querySelector('.tooltip-popup');
                 if (existing) existing.remove();
@@ -202,7 +508,6 @@ class DoViConvertApp {
     }
     
     showTooltipPopup(element, text) {
-        // Remove any existing popup
         const existing = document.querySelector('.tooltip-popup');
         if (existing) existing.remove();
         
@@ -215,7 +520,6 @@ class DoViConvertApp {
         popup.style.top = `${rect.bottom + 8}px`;
         popup.style.left = `${rect.left - 100}px`;
         
-        // Auto-hide after 3 seconds
         setTimeout(() => popup.remove(), 3000);
     }
     
@@ -224,9 +528,6 @@ class DoViConvertApp {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
             
-            console.log('Connecting to WebSocket:', wsUrl);
-            
-            // Only append to terminal if it exists
             if (this.terminalContent) {
                 this.appendToTerminal(`🔌 Connecting to ${wsUrl}...\n`, 'system');
             }
@@ -234,20 +535,16 @@ class DoViConvertApp {
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
-                console.log('WebSocket connected successfully');
                 this.reconnectAttempts = 0;
                 if (this.terminalContent) {
                     this.appendToTerminal('🔗 Connected to server\n', 'system');
                 }
-                
-                // Start keepalive ping every 20 seconds
                 this.startKeepalive();
         };
         
         this.ws.onmessage = (event) => {
                 try {
             const data = JSON.parse(event.data);
-                    // Ignore ping messages
                     if (data.type === 'ping' || data.type === 'keepalive') {
                         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                             this.ws.send('ping');
@@ -256,16 +553,12 @@ class DoViConvertApp {
                     }
             this.handleMessage(data);
                 } catch (e) {
-                    // Handle non-JSON messages (like "pong")
-                    if (event.data === 'pong') {
-                        return;
-                    }
+                    if (event.data === 'pong') return;
                     console.error('Failed to parse WebSocket message:', e);
                 }
             };
             
             this.ws.onclose = (event) => {
-                console.log('WebSocket disconnected:', event.code, event.reason);
                 this.stopKeepalive();
                 if (this.terminalContent) {
                     this.appendToTerminal(`⚠️ Disconnected (code: ${event.code})\n`, 'error');
@@ -304,9 +597,7 @@ class DoViConvertApp {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-            
-            this.appendToTerminal(`🔄 Reconnecting in ${delay/1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...\n`, 'system');
-            
+            this.appendToTerminal(`🔄 Reconnecting in ${delay/1000}s...\n`, 'system');
             setTimeout(() => this.connectWebSocket(), delay);
         } else {
             this.appendToTerminal('❌ Failed to reconnect. Please refresh the page.\n', 'error');
@@ -317,21 +608,20 @@ class DoViConvertApp {
         switch (data.type) {
             case 'status':
                 this.updateStatus(data.running, data.action);
-                if (data.settings) {
-                    this.applySettings(data.settings);
-                }
+                if (data.settings) this.applySettings(data.settings);
                 break;
             case 'output':
                 this.appendToTerminal(data.data);
                 break;
             case 'results':
                 this.displayResults(data.data);
+                this.loadStats();
                 break;
             case 'progress':
                 this.updateProgress(data.data);
                 break;
-            case 'keepalive':
-                // Ignore keepalive messages
+            case 'conversion_complete':
+                this.loadStats();
                 break;
         }
     }
@@ -346,28 +636,24 @@ class DoViConvertApp {
         
         if (!container) return;
         
-        if (progress.status === 'scanning') {
+        if (progress.status === 'scanning' || progress.status === 'converting') {
             container.style.display = 'block';
             fill.style.width = `${progress.percent}%`;
             stats.textContent = `${progress.current} / ${progress.total}`;
             if (percent) percent.textContent = `${progress.percent}%`;
             detail.textContent = progress.filename ? `📄 ${progress.filename}` : 'Processing...';
-            label.textContent = 'Scanning files...';
-        } else if (progress.status === 'cancelled') {
-            label.textContent = 'Cancelled';
-            if (percent) percent.textContent = '—';
-            detail.textContent = 'Scan was cancelled';
-            setTimeout(() => {
-                container.style.display = 'none';
-            }, 3000);
+            label.textContent = progress.status === 'scanning' ? 'Scanning files...' : 'Converting...';
+            
+            // Show ETA if available
+            if (progress.eta) {
+                detail.textContent += ` (ETA: ${progress.eta})`;
+            }
         } else if (progress.status === 'complete') {
             fill.style.width = '100%';
             if (percent) percent.textContent = '100%';
             label.textContent = 'Complete!';
-            detail.textContent = '✓ Scan finished successfully';
-            setTimeout(() => {
-                container.style.display = 'none';
-            }, 3000);
+            detail.textContent = '✓ Finished successfully';
+            setTimeout(() => { container.style.display = 'none'; }, 3000);
         }
     }
     
@@ -377,19 +663,17 @@ class DoViConvertApp {
         
         if (!summary) return;
         
-        // Store results for pagination
         this.allResults = results;
+        this.selectedFiles.clear();
         this.currentResultsPage = 1;
         
         const profile7 = results.profile7 || [];
         const profile8 = results.profile8 || [];
         
-        // Update count badge
         if (countBadge) {
             countBadge.textContent = profile7.length > 0 ? profile7.length : '';
         }
         
-        // Update summary
         summary.innerHTML = `
             <div class="stats">
                 <div class="stat profile7">
@@ -411,10 +695,8 @@ class DoViConvertApp {
             </div>
         `;
         
-        // Render the first page
-        this.renderResultsPage();
-        
-        // Switch to results tab
+        this.applyFilters();
+        this.updateSelectionUI();
         this.switchTab('results');
     }
     
@@ -426,57 +708,50 @@ class DoViConvertApp {
         const currentPageEl = document.getElementById('currentPage');
         const totalPagesEl = document.getElementById('totalPages');
         
-        if (!list || !this.allResults) return;
+        if (!list) return;
         
-        const profile7 = this.allResults.profile7 || [];
-        const profile8 = this.allResults.profile8 || [];
-        
-        // Combine all DV files for pagination
-        const allFiles = [
-            ...profile7.map(f => ({ ...f, type: 'convert' })),
-            ...profile8.map(f => ({ ...f, type: 'compatible' }))
-        ];
-        
+        const allFiles = this.filteredResults || [];
         const totalItems = allFiles.length;
-        const totalPages = Math.ceil(totalItems / this.resultsPerPage);
+        const totalPages = Math.ceil(totalItems / this.resultsPerPage) || 1;
         
-        // Ensure current page is valid
         if (this.currentResultsPage > totalPages) this.currentResultsPage = totalPages;
         if (this.currentResultsPage < 1) this.currentResultsPage = 1;
         
-        // Calculate slice indices
         const startIndex = (this.currentResultsPage - 1) * this.resultsPerPage;
         const endIndex = Math.min(startIndex + this.resultsPerPage, totalItems);
         const pageItems = allFiles.slice(startIndex, endIndex);
         
-        // Clear and render list
         list.innerHTML = '';
         
         if (totalItems === 0) {
-            list.innerHTML = '<p class="no-results">No Dolby Vision files found.</p>';
+            list.innerHTML = '<p class="no-results">No files match your search/filter criteria.</p>';
             if (pagination) pagination.style.display = 'none';
             return;
         }
         
         pageItems.forEach(file => {
+            const isSelected = this.selectedFiles.has(file.path);
             const item = document.createElement('div');
-            item.className = 'result-item';
+            item.className = `result-item${isSelected ? ' selected' : ''}`;
             const badgeClass = file.type === 'convert' ? 'convert' : 'compatible';
             const badgeText = file.type === 'convert' ? 'Needs Conversion' : 'Compatible';
             
             item.innerHTML = `
+                <input type="checkbox" class="result-checkbox" 
+                    ${isSelected ? 'checked' : ''} 
+                    ${file.type === 'compatible' ? 'disabled title="Only Profile 7 files can be converted"' : ''}
+                    onchange="app.toggleFileSelection('${file.path?.replace(/'/g, "\\'")}', this.checked)">
                 <div class="file-info">
-                    <div class="file-name" title="${file.name}">${file.name}</div>
+                    <div class="file-name" title="${file.path || file.name}">${file.name}</div>
                     <div class="file-meta">${file.hdr || file.profile || 'Dolby Vision'}</div>
                 </div>
                 <div class="file-action">
                     <span class="badge ${badgeClass}">${badgeText}</span>
-                </div>
-            `;
+            </div>
+        `;
             list.appendChild(item);
         });
         
-        // Update pagination controls
         if (pagination) {
             if (totalPages > 1) {
                 pagination.style.display = 'flex';
@@ -491,30 +766,22 @@ class DoViConvertApp {
     }
     
     goToPage(page) {
-        const profile7 = this.allResults?.profile7 || [];
-        const profile8 = this.allResults?.profile8 || [];
-        const totalItems = profile7.length + profile8.length;
-        const totalPages = Math.ceil(totalItems / this.resultsPerPage);
+        const totalItems = this.filteredResults?.length || 0;
+        const totalPages = Math.ceil(totalItems / this.resultsPerPage) || 1;
         
         if (page >= 1 && page <= totalPages) {
             this.currentResultsPage = page;
             this.renderResultsPage();
-            
-            // Scroll results list to top
             const list = document.getElementById('resultsList');
             if (list) list.scrollTop = 0;
         }
     }
     
     switchTab(tabName) {
-        const tabs = document.querySelectorAll('.tab-btn');
-        const contents = document.querySelectorAll('.tab-content');
-        
-        tabs.forEach(tab => {
+        document.querySelectorAll('.tab-btn').forEach(tab => {
             tab.classList.toggle('active', tab.dataset.tab === tabName);
         });
-        
-        contents.forEach(content => {
+        document.querySelectorAll('.tab-content').forEach(content => {
             content.classList.toggle('active', content.id === tabName + 'Tab');
         });
     }
@@ -523,29 +790,15 @@ class DoViConvertApp {
         this.isRunning = running;
         
         if (running) {
-            this.statusIndicator.classList.add('running');
-            this.statusText.textContent = action === 'scan' ? 'Scanning...' : 'Converting...';
-            this.scanBtn.disabled = true;
-            this.convertBtn.disabled = true;
-            this.stopBtn.disabled = false;
+            this.statusIndicator?.classList.add('running');
+            if (this.statusText) this.statusText.textContent = action === 'scan' ? 'Scanning...' : 'Converting...';
+            if (this.scanBtn) this.scanBtn.disabled = true;
+            if (this.stopBtn) this.stopBtn.disabled = false;
         } else {
-            this.statusIndicator.classList.remove('running');
-            this.statusText.textContent = 'Ready';
-            this.scanBtn.disabled = false;
-            this.convertBtn.disabled = false;
-            this.stopBtn.disabled = true;
-            
-            // Hide progress bar when done
-            const container = document.getElementById('progressContainer');
-            if (container) {
-                const fill = document.getElementById('progressFill');
-                const label = document.getElementById('progressLabel');
-                if (fill) fill.style.width = '100%';
-                if (label) label.textContent = 'Complete!';
-                setTimeout(() => {
-                    container.style.display = 'none';
-                }, 1500);
-            }
+            this.statusIndicator?.classList.remove('running');
+            if (this.statusText) this.statusText.textContent = 'Ready';
+            if (this.scanBtn) this.scanBtn.disabled = false;
+            if (this.stopBtn) this.stopBtn.disabled = true;
         }
     }
     
@@ -559,14 +812,12 @@ class DoViConvertApp {
         }
     }
     
-    // State persistence methods
     saveState() {
         try {
-            const state = {
+            sessionStorage.setItem('doviConvertState', JSON.stringify({
                 logHistory: this.logHistory.slice(-this.maxLogLines),
                 timestamp: Date.now()
-            };
-            sessionStorage.setItem('doviConvertState', JSON.stringify(state));
+            }));
         } catch (e) {
             console.warn('Failed to save state:', e);
         }
@@ -577,10 +828,8 @@ class DoViConvertApp {
             const saved = sessionStorage.getItem('doviConvertState');
             if (saved) {
                 const state = JSON.parse(saved);
-                // Only restore if less than 1 hour old
                 if (Date.now() - state.timestamp < 3600000) {
                     this.logHistory = state.logHistory || [];
-                    // Restore log to terminal
                     if (this.logHistory.length > 0 && this.terminalContent) {
                         this.terminalContent.innerHTML = '';
                         this.logHistory.forEach(entry => {
@@ -599,7 +848,6 @@ class DoViConvertApp {
         try {
             const response = await fetch('/api/status');
             const status = await response.json();
-            
             if (status.is_running) {
                 this.updateStatus(true, status.action || 'scan');
                 this.appendToTerminal('🔄 Process still running on server...\n', 'system');
@@ -610,56 +858,55 @@ class DoViConvertApp {
     }
     
     applySettings(settings) {
-        if (settings.scan_path) {
+        if (settings.scan_path && this.scanPathInput) {
             this.scanPathInput.value = settings.scan_path;
             this.currentPath = settings.scan_path;
         }
-        if (settings.scan_depth !== undefined) {
+        if (settings.scan_depth !== undefined && this.scanDepthInput) {
             this.scanDepthInput.value = settings.scan_depth;
         }
-        if (settings.safe_mode !== undefined) {
-            this.safeModeCheckbox.checked = settings.safe_mode;
-        }
-        if (settings.include_simple_fel !== undefined) {
-            this.includeSimpleCheckbox.checked = settings.include_simple_fel;
-        }
-        if (settings.auto_cleanup !== undefined) {
-            this.autoCleanupCheckbox.checked = settings.auto_cleanup;
-        }
-        if (settings.include_movies !== undefined && this.includeMoviesCheckbox) {
-            this.includeMoviesCheckbox.checked = settings.include_movies;
-        }
-        if (settings.include_tv_shows !== undefined && this.includeTvShowsCheckbox) {
-            this.includeTvShowsCheckbox.checked = settings.include_tv_shows;
-        }
+        if (this.safeModeCheckbox) this.safeModeCheckbox.checked = settings.safe_mode ?? false;
+        if (this.includeSimpleCheckbox) this.includeSimpleCheckbox.checked = settings.include_simple_fel ?? false;
+        if (this.autoCleanupCheckbox) this.autoCleanupCheckbox.checked = settings.auto_cleanup ?? false;
+        if (this.includeMoviesCheckbox) this.includeMoviesCheckbox.checked = settings.include_movies ?? true;
+        if (this.includeTvShowsCheckbox) this.includeTvShowsCheckbox.checked = settings.include_tv_shows ?? true;
+        if (this.useJellyfinCheckbox) this.useJellyfinCheckbox.checked = settings.use_jellyfin ?? false;
+        if (this.jellyfinUrlInput) this.jellyfinUrlInput.value = settings.jellyfin_url || '';
+        if (this.jellyfinApiKeyInput) this.jellyfinApiKeyInput.value = settings.jellyfin_api_key || '';
+        if (this.enableScheduleCheckbox) this.enableScheduleCheckbox.checked = settings.schedule_enabled ?? false;
+        if (this.scheduleTimeInput) this.scheduleTimeInput.value = settings.schedule_time || '02:00';
+        if (this.autoConvertCheckbox) this.autoConvertCheckbox.checked = settings.auto_convert ?? false;
         
-        // Jellyfin settings
-        if (settings.use_jellyfin !== undefined && this.useJellyfinCheckbox) {
-            this.useJellyfinCheckbox.checked = settings.use_jellyfin;
-        }
-        if (settings.jellyfin_url && this.jellyfinUrlInput) {
-            this.jellyfinUrlInput.value = settings.jellyfin_url;
-        }
-        if (settings.jellyfin_api_key && this.jellyfinApiKeyInput) {
-            this.jellyfinApiKeyInput.value = settings.jellyfin_api_key;
-        }
+        // Schedule days
+        const days = settings.schedule_days || [6];
+        document.querySelectorAll('input[name="scheduleDay"]').forEach(cb => {
+            cb.checked = days.includes(parseInt(cb.value));
+        });
         
-        // Update the scan mode indicator
         this.updateScanModeIndicator();
     }
     
     async saveSettings() {
+        const scheduleDays = [];
+        document.querySelectorAll('input[name="scheduleDay"]:checked').forEach(cb => {
+            scheduleDays.push(parseInt(cb.value));
+        });
+        
         const settings = {
-            scan_path: this.scanPathInput.value,
-            scan_depth: parseInt(this.scanDepthInput.value, 10),
-            safe_mode: this.safeModeCheckbox.checked,
-            include_simple_fel: this.includeSimpleCheckbox.checked,
-            auto_cleanup: this.autoCleanupCheckbox.checked,
+            scan_path: this.scanPathInput?.value,
+            scan_depth: parseInt(this.scanDepthInput?.value, 10) || 5,
+            safe_mode: this.safeModeCheckbox?.checked ?? false,
+            include_simple_fel: this.includeSimpleCheckbox?.checked ?? false,
+            auto_cleanup: this.autoCleanupCheckbox?.checked ?? false,
             include_movies: this.includeMoviesCheckbox?.checked ?? true,
             include_tv_shows: this.includeTvShowsCheckbox?.checked ?? true,
-            use_jellyfin: this.useJellyfinCheckbox?.checked || false,
+            use_jellyfin: this.useJellyfinCheckbox?.checked ?? false,
             jellyfin_url: this.jellyfinUrlInput?.value || '',
-            jellyfin_api_key: this.jellyfinApiKeyInput?.value || ''
+            jellyfin_api_key: this.jellyfinApiKeyInput?.value || '',
+            schedule_enabled: this.enableScheduleCheckbox?.checked ?? false,
+            schedule_time: this.scheduleTimeInput?.value || '02:00',
+            schedule_days: scheduleDays,
+            auto_convert: this.autoConvertCheckbox?.checked ?? false
         };
         
         try {
@@ -675,8 +922,7 @@ class DoViConvertApp {
     
     toggleApiKeyVisibility() {
         if (this.jellyfinApiKeyInput) {
-            const type = this.jellyfinApiKeyInput.type;
-            this.jellyfinApiKeyInput.type = type === 'password' ? 'text' : 'password';
+            this.jellyfinApiKeyInput.type = this.jellyfinApiKeyInput.type === 'password' ? 'text' : 'password';
         }
     }
     
@@ -688,11 +934,10 @@ class DoViConvertApp {
         
         if (!url || !apiKey) {
             this.jellyfinStatus.className = 'jellyfin-status error';
-            this.jellyfinStatus.textContent = 'Please enter Jellyfin URL and API key';
+            this.jellyfinStatus.textContent = 'Please enter URL and API key';
             return;
         }
         
-        // Save settings first
         await this.saveSettings();
         
         this.jellyfinStatus.className = 'jellyfin-status testing';
@@ -718,38 +963,28 @@ class DoViConvertApp {
     async startScan() {
         this.clearTerminal();
         
-        // Ensure WebSocket is connected before starting scan
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             this.appendToTerminal('🔌 Reconnecting WebSocket...\n', 'system');
             this.connectWebSocket();
-            // Wait a moment for connection
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
         
-        this.appendToTerminal('📡 Sending scan request...\n', 'system');
+        const incremental = this.incrementalScanCheckbox?.checked ?? true;
+        this.appendToTerminal(`📡 Starting ${incremental ? 'incremental' : 'full'} scan...\n`, 'system');
         
         try {
-            const response = await fetch('/api/scan', { method: 'POST' });
+            const response = await fetch('/api/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ incremental })
+            });
             const data = await response.json();
             
             if (!response.ok) {
                 this.appendToTerminal(`❌ Server error: ${data.detail || response.statusText}\n`, 'error');
-                return;
             }
-            
-            this.appendToTerminal(`✅ Scan started: ${JSON.stringify(data)}\n`, 'system');
         } catch (error) {
             this.appendToTerminal(`❌ Failed to start scan: ${error.message}\n`, 'error');
-            console.error('Scan error:', error);
-        }
-    }
-    
-    async startConvert() {
-        this.clearTerminal();
-        try {
-            await fetch('/api/convert', { method: 'POST' });
-        } catch (error) {
-            this.appendToTerminal(`❌ Failed to start conversion: ${error.message}\n`, 'error');
         }
     }
     
@@ -757,72 +992,51 @@ class DoViConvertApp {
         try {
             await fetch('/api/stop', { method: 'POST' });
         } catch (error) {
-            this.appendToTerminal(`❌ Failed to stop process: ${error.message}\n`, 'error');
+            this.appendToTerminal(`❌ Failed to stop: ${error.message}\n`, 'error');
         }
     }
 
     appendToTerminal(text, type = 'normal') {
-        // Save to history
         this.logHistory.push({ text, type, time: Date.now() });
-        if (this.logHistory.length > this.maxLogLines) {
-            this.logHistory.shift();
-        }
+        if (this.logHistory.length > this.maxLogLines) this.logHistory.shift();
         this.saveState();
-        
-        // Render to terminal
         this.appendToTerminalDirect(text, type);
     }
     
     appendToTerminalDirect(text, type = 'normal') {
         if (!this.terminalContent) return;
         
-        // Remove welcome message on first real output
         const welcomeMsg = this.terminalContent.querySelector('.welcome-msg');
-        if (welcomeMsg) {
-            this.terminalContent.innerHTML = '';
-        }
+        if (welcomeMsg) this.terminalContent.innerHTML = '';
         
         const span = document.createElement('span');
         span.textContent = text;
         
-        if (type === 'error') {
-            span.style.color = 'var(--accent-danger)';
-        } else if (type === 'system') {
-            span.style.color = 'var(--text-muted)';
-        }
+        if (type === 'error') span.style.color = 'var(--accent-danger)';
+        else if (type === 'system') span.style.color = 'var(--text-muted)';
         
-        // Apply colors based on content
-        if (text.includes('✅') || text.includes('SUCCESS')) {
-            span.style.color = 'var(--accent-secondary)';
-        } else if (text.includes('❌') || text.includes('ERROR') || text.includes('FAIL')) {
-            span.style.color = 'var(--accent-danger)';
-        } else if (text.includes('⚠️') || text.includes('WARNING')) {
-            span.style.color = 'var(--accent-warning)';
-        } else if (text.includes('🔍') || text.includes('🎬')) {
-            span.style.color = 'var(--accent-primary)';
-        }
+        if (text.includes('✅') || text.includes('SUCCESS')) span.style.color = 'var(--accent-secondary)';
+        else if (text.includes('❌') || text.includes('ERROR')) span.style.color = 'var(--accent-danger)';
+        else if (text.includes('⚠️') || text.includes('WARNING')) span.style.color = 'var(--accent-warning)';
+        else if (text.includes('🔍') || text.includes('🎬')) span.style.color = 'var(--accent-primary)';
         
         this.terminalContent.appendChild(span);
-        
-        // Auto-scroll to bottom
         this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
     }
 
     clearTerminal() {
-        if (this.terminalContent) {
-            this.terminalContent.innerHTML = '';
-        }
+        if (this.terminalContent) this.terminalContent.innerHTML = '';
         this.logHistory = [];
         this.saveState();
     }
 
     async openBrowser() {
-        this.modal.classList.add('active');
+        this.modal?.classList.add('active');
         await this.loadDirectory(this.currentPath);
     }
 
     closeModal() {
-        this.modal.classList.remove('active');
+        this.modal?.classList.remove('active');
     }
 
     async loadDirectory(path) {
@@ -831,28 +1045,25 @@ class DoViConvertApp {
             const data = await response.json();
             
             this.currentPath = data.current;
-            this.currentPathDisplay.textContent = data.current;
+            if (this.currentPathDisplay) this.currentPathDisplay.textContent = data.current;
+            if (this.directoryList) this.directoryList.innerHTML = '';
             
-            this.directoryList.innerHTML = '';
-            
-            // Add parent directory option
             if (data.parent) {
-                const parentItem = this.createDirectoryItem('..', data.parent, true);
-                this.directoryList.appendChild(parentItem);
+                this.directoryList?.appendChild(this.createDirectoryItem('..', data.parent, true));
             }
             
-            // Add subdirectories
             for (const dir of data.directories) {
-                const item = this.createDirectoryItem(dir.name, dir.path);
-                this.directoryList.appendChild(item);
+                this.directoryList?.appendChild(this.createDirectoryItem(dir.name, dir.path));
             }
             
-            if (data.directories.length === 0 && !data.parent) {
+            if (data.directories.length === 0 && !data.parent && this.directoryList) {
                 this.directoryList.innerHTML = '<p style="color: var(--text-muted); padding: 1rem;">No subdirectories found</p>';
             }
         } catch (error) {
             console.error('Failed to browse directory:', error);
-            this.directoryList.innerHTML = '<p style="color: var(--accent-danger); padding: 1rem;">Failed to load directory</p>';
+            if (this.directoryList) {
+                this.directoryList.innerHTML = '<p style="color: var(--accent-danger); padding: 1rem;">Failed to load directory</p>';
+            }
         }
     }
 
@@ -870,7 +1081,7 @@ class DoViConvertApp {
     }
     
     selectDirectory() {
-        this.scanPathInput.value = this.currentPath;
+        if (this.scanPathInput) this.scanPathInput.value = this.currentPath;
         this.saveSettings();
         this.closeModal();
     }
@@ -878,12 +1089,11 @@ class DoViConvertApp {
 
 // Initialize app when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('DOM loaded, initializing app...');
     try {
         window.app = new DoViConvertApp();
-        console.log('App initialized successfully');
     } catch (error) {
         console.error('Failed to initialize app:', error);
-        document.body.innerHTML = `<pre style="color: red; padding: 20px;">Error initializing app: ${error.message}\n\n${error.stack}</pre>`;
+        document.body.innerHTML = `<pre style="color: red; padding: 20px;">Error: ${error.message}\n\n${error.stack}</pre>`;
     }
 });
+

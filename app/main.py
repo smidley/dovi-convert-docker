@@ -10,16 +10,15 @@ import traceback
 import aiohttp
 from pathlib import Path
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import subprocess
 
-app = FastAPI(title="DoVi Convert", version="1.0.0")
+app = FastAPI(title="DoVi Convert", version="1.1.0")
 
 # Mount static files and templates
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
@@ -29,16 +28,20 @@ templates = Jinja2Templates(directory="/app/templates")
 MEDIA_PATH = os.environ.get("MEDIA_PATH", "/media")
 CONFIG_PATH = os.environ.get("CONFIG_PATH", "/config")
 
-# State management
+
 class AppState:
     def __init__(self):
         self.is_running = False
         self.scan_cancelled = False
         self.current_process = None
+        self.current_action = None
         self.websocket_clients: list[WebSocket] = []
         self.scan_path = MEDIA_PATH
         self.settings = self.load_settings()
         self.scan_results = []
+        self.scan_cache = self.load_scan_cache()
+        self.conversion_history = self.load_history()
+        self.scheduled_task = None
     
     def load_settings(self) -> dict:
         settings_file = Path(CONFIG_PATH) / "settings.json"
@@ -55,7 +58,11 @@ class AppState:
             "include_tv_shows": True,
             "jellyfin_url": "",
             "jellyfin_api_key": "",
-            "use_jellyfin": False
+            "use_jellyfin": False,
+            "schedule_enabled": False,
+            "schedule_time": "02:00",
+            "schedule_days": [6],
+            "auto_convert": False
         }
     
     def save_settings(self):
@@ -63,6 +70,47 @@ class AppState:
         settings_file.parent.mkdir(parents=True, exist_ok=True)
         with open(settings_file, "w") as f:
             json.dump(self.settings, f, indent=2)
+    
+    def load_scan_cache(self) -> dict:
+        cache_file = Path(CONFIG_PATH) / "scan_cache.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file) as f:
+                    return json.load(f)
+            except:
+                pass
+        return {"files": {}, "last_scan": None}
+    
+    def save_scan_cache(self):
+        cache_file = Path(CONFIG_PATH) / "scan_cache.json"
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_file, "w") as f:
+            json.dump(self.scan_cache, f, indent=2)
+    
+    def load_history(self) -> list:
+        history_file = Path(CONFIG_PATH) / "history.json"
+        if history_file.exists():
+            try:
+                with open(history_file) as f:
+                    return json.load(f)
+            except:
+                pass
+        return []
+    
+    def save_history(self):
+        history_file = Path(CONFIG_PATH) / "history.json"
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(history_file, "w") as f:
+            json.dump(self.conversion_history[-100:], f, indent=2)  # Keep last 100
+    
+    def add_to_history(self, filename: str, status: str = "success"):
+        self.conversion_history.append({
+            "filename": filename,
+            "date": datetime.now().isoformat(),
+            "status": status
+        })
+        self.save_history()
+
 
 state = AppState()
 
@@ -78,11 +126,22 @@ class SettingsUpdate(BaseModel):
     jellyfin_url: Optional[str] = None
     jellyfin_api_key: Optional[str] = None
     use_jellyfin: Optional[bool] = None
+    schedule_enabled: Optional[bool] = None
+    schedule_time: Optional[str] = None
+    schedule_days: Optional[List[int]] = None
+    auto_convert: Optional[bool] = None
+
+
+class ConvertRequest(BaseModel):
+    files: Optional[List[str]] = None
+
+
+class ScanRequest(BaseModel):
+    incremental: Optional[bool] = True
 
 
 @app.get("/")
 async def index(request: Request):
-    """Serve the main web interface."""
     return templates.TemplateResponse("index.html", {
         "request": request,
         "media_path": MEDIA_PATH
@@ -91,106 +150,147 @@ async def index(request: Request):
 
 @app.get("/api/status")
 async def get_status():
-    """Get current application status."""
     return {
         "is_running": state.is_running,
+        "action": state.current_action,
         "settings": state.settings,
-        "media_path": MEDIA_PATH
-    }
-
-
-@app.get("/api/status")
-async def get_status():
-    """Get current running status for page refresh recovery."""
-    return {
-        "is_running": state.is_running,
-        "action": "scan" if state.is_running else None,
+        "media_path": MEDIA_PATH,
         "websocket_clients": len(state.websocket_clients)
     }
 
 
 @app.get("/api/debug")
 async def debug_info():
-    """Debug endpoint to check system status."""
     import shutil
     
-    # Check if commands exist
-    dovi_convert_path = shutil.which("dovi_convert")
-    dovi_tool_path = shutil.which("dovi_tool")
-    ffmpeg_path = shutil.which("ffmpeg")
-    
-    # Check media path
-    media_exists = Path(MEDIA_PATH).exists()
-    media_contents = []
-    if media_exists:
-        try:
-            media_contents = [str(p.name) for p in Path(MEDIA_PATH).iterdir()][:10]
-        except:
-            pass
-    
     return {
-        "dovi_convert": dovi_convert_path,
-        "dovi_tool": dovi_tool_path,
-        "ffmpeg": ffmpeg_path,
+        "dovi_convert": shutil.which("dovi_convert"),
+        "dovi_tool": shutil.which("dovi_tool"),
+        "ffmpeg": shutil.which("ffmpeg"),
+        "mediainfo": shutil.which("mediainfo"),
         "media_path": MEDIA_PATH,
-        "media_exists": media_exists,
-        "media_contents": media_contents,
+        "media_exists": Path(MEDIA_PATH).exists(),
         "config_path": CONFIG_PATH,
         "settings": state.settings,
         "websocket_clients": len(state.websocket_clients),
-        "is_running": state.is_running
+        "is_running": state.is_running,
+        "cache_entries": len(state.scan_cache.get("files", {}))
     }
 
 
 @app.get("/api/settings")
 async def get_settings():
-    """Get current settings."""
     return state.settings
 
 
 @app.post("/api/settings")
 async def update_settings(settings: SettingsUpdate):
-    """Update application settings."""
     if settings.scan_path is not None:
-        # Validate path exists (only if not using Jellyfin)
         if not state.settings.get("use_jellyfin") and not Path(settings.scan_path).exists():
             raise HTTPException(status_code=400, detail="Path does not exist")
         state.settings["scan_path"] = settings.scan_path
     
     if settings.auto_cleanup is not None:
         state.settings["auto_cleanup"] = settings.auto_cleanup
-    
     if settings.safe_mode is not None:
         state.settings["safe_mode"] = settings.safe_mode
-    
     if settings.include_simple_fel is not None:
         state.settings["include_simple_fel"] = settings.include_simple_fel
-    
     if settings.scan_depth is not None:
         state.settings["scan_depth"] = max(1, min(10, settings.scan_depth))
-    
     if settings.include_movies is not None:
         state.settings["include_movies"] = settings.include_movies
-    
     if settings.include_tv_shows is not None:
         state.settings["include_tv_shows"] = settings.include_tv_shows
-    
     if settings.jellyfin_url is not None:
         state.settings["jellyfin_url"] = settings.jellyfin_url.rstrip('/')
-    
     if settings.jellyfin_api_key is not None:
         state.settings["jellyfin_api_key"] = settings.jellyfin_api_key
-    
     if settings.use_jellyfin is not None:
         state.settings["use_jellyfin"] = settings.use_jellyfin
+    if settings.schedule_enabled is not None:
+        state.settings["schedule_enabled"] = settings.schedule_enabled
+    if settings.schedule_time is not None:
+        state.settings["schedule_time"] = settings.schedule_time
+    if settings.schedule_days is not None:
+        state.settings["schedule_days"] = settings.schedule_days
+    if settings.auto_convert is not None:
+        state.settings["auto_convert"] = settings.auto_convert
     
     state.save_settings()
+    
+    # Update scheduled task if needed
+    if settings.schedule_enabled is not None:
+        setup_scheduled_scan()
+    
     return state.settings
+
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get library statistics and backup info."""
+    scan_path = state.settings.get("scan_path", MEDIA_PATH)
+    
+    # Count from cache
+    profile7_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "profile7")
+    profile8_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "profile8")
+    hdr10_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "hdr10")
+    sdr_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "sdr")
+    
+    # Count backup files
+    backup_count = 0
+    backup_size = 0
+    try:
+        for root, _, files in os.walk(scan_path):
+            for f in files:
+                if f.endswith(('.bak', '.backup', '.original')):
+                    backup_count += 1
+                    try:
+                        backup_size += os.path.getsize(os.path.join(root, f))
+                    except:
+                        pass
+    except:
+        pass
+    
+    return {
+        "profile7_count": profile7_count,
+        "profile8_count": profile8_count,
+        "hdr10_count": hdr10_count,
+        "sdr_count": sdr_count,
+        "backup_count": backup_count,
+        "backup_size": backup_size,
+        "history": state.conversion_history[-20:],
+        "last_scan": state.scan_cache.get("last_scan")
+    }
+
+
+@app.post("/api/backups/clean")
+async def clean_backups():
+    """Delete all backup files."""
+    scan_path = state.settings.get("scan_path", MEDIA_PATH)
+    deleted = 0
+    freed = 0
+    
+    try:
+        for root, _, files in os.walk(scan_path):
+            for f in files:
+                if f.endswith(('.bak', '.backup', '.original')):
+                    filepath = os.path.join(root, f)
+                    try:
+                        size = os.path.getsize(filepath)
+                        os.remove(filepath)
+                        deleted += 1
+                        freed += size
+                    except:
+                        pass
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+    return {"deleted": deleted, "freed": freed}
 
 
 @app.get("/api/browse")
 async def browse_directory(path: str = "/"):
-    """Browse directories for path selection."""
     try:
         target_path = Path(path)
         if not target_path.exists():
@@ -215,7 +315,6 @@ async def browse_directory(path: str = "/"):
 
 @app.post("/api/jellyfin/test")
 async def test_jellyfin():
-    """Test Jellyfin connection."""
     url = state.settings.get("jellyfin_url", "")
     api_key = state.settings.get("jellyfin_api_key", "")
     
@@ -240,14 +339,13 @@ async def test_jellyfin():
 
 
 @app.post("/api/scan")
-async def start_scan():
-    """Start a scan operation."""
+async def start_scan(request: ScanRequest = ScanRequest()):
     if state.is_running:
         raise HTTPException(status_code=409, detail="A process is already running")
     
+    state.current_action = "scan"
     await broadcast_message({"type": "status", "running": True, "action": "scan"})
     
-    # Use Jellyfin if enabled
     if state.settings.get("use_jellyfin"):
         jellyfin_url = state.settings.get("jellyfin_url", "")
         jellyfin_key = state.settings.get("jellyfin_api_key", "")
@@ -259,25 +357,24 @@ async def start_scan():
         
         asyncio.create_task(run_jellyfin_scan())
     else:
-        asyncio.create_task(run_scan())
+        asyncio.create_task(run_scan(incremental=request.incremental))
     
     return {"status": "started", "action": "scan"}
 
 
 @app.post("/api/convert")
-async def start_convert():
-    """Start a batch conversion."""
+async def start_convert(request: ConvertRequest = ConvertRequest()):
     if state.is_running:
         raise HTTPException(status_code=409, detail="A process is already running")
     
+    state.current_action = "convert"
     await broadcast_message({"type": "status", "running": True, "action": "convert"})
-    asyncio.create_task(run_convert())
+    asyncio.create_task(run_convert(files=request.files))
     return {"status": "started", "action": "convert"}
 
 
 @app.post("/api/stop")
 async def stop_process():
-    """Stop the current running process."""
     if state.is_running:
         state.scan_cancelled = True
         if state.current_process:
@@ -292,7 +389,6 @@ async def stop_process():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for real-time output streaming."""
     try:
         await websocket.accept()
     except Exception as e:
@@ -303,24 +399,18 @@ async def websocket_endpoint(websocket: WebSocket):
     print(f"WebSocket connected. Total clients: {len(state.websocket_clients)}", flush=True)
     
     try:
-        # Send initial status
         await websocket.send_json({
             "type": "status",
             "running": state.is_running,
             "settings": state.settings
         })
         
-        # Keep connection alive - just wait for disconnect
-        # We don't need to receive messages, just keep the connection open
         while True:
             try:
-                # Use receive with a long timeout
                 data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
-                # Handle ping from client
                 if data == "ping":
                     await websocket.send_text("pong")
             except asyncio.TimeoutError:
-                # Send keepalive ping to client
                 try:
                     await websocket.send_json({"type": "keepalive"})
                 except Exception:
@@ -330,7 +420,6 @@ async def websocket_endpoint(websocket: WebSocket):
         print("WebSocket client disconnected normally", flush=True)
     except Exception as e:
         print(f"WebSocket error: {type(e).__name__}: {e}", flush=True)
-        traceback.print_exc()
     finally:
         if websocket in state.websocket_clients:
             state.websocket_clients.remove(websocket)
@@ -338,19 +427,14 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 async def broadcast_message(message: dict):
-    """Broadcast a message to all connected WebSocket clients."""
     if not state.websocket_clients:
-        print(f"No WebSocket clients to broadcast to. Message: {message.get('type', 'unknown')}", flush=True)
         return
         
-    print(f"Broadcasting to {len(state.websocket_clients)} client(s): {message.get('type', 'unknown')}", flush=True)
-    
     disconnected = []
     for client in state.websocket_clients:
         try:
             await client.send_json(message)
         except Exception as e:
-            print(f"Failed to send to client: {e}", flush=True)
             disconnected.append(client)
     
     for client in disconnected:
@@ -359,29 +443,17 @@ async def broadcast_message(message: dict):
 
 
 async def run_jellyfin_scan():
-    """Scan Jellyfin library for Dolby Vision files - instant metadata access."""
+    """Scan Jellyfin library for Dolby Vision files."""
     state.is_running = True
     state.scan_cancelled = False
     
     url = state.settings.get("jellyfin_url", "")
     api_key = state.settings.get("jellyfin_api_key", "")
     
-    await broadcast_message({
-        "type": "output",
-        "data": f"{'='*60}\n"
-    })
-    await broadcast_message({
-        "type": "output",
-        "data": "🔍 JELLYFIN LIBRARY SCAN (Instant)\n"
-    })
-    await broadcast_message({
-        "type": "output",
-        "data": f"{'='*60}\n\n"
-    })
-    await broadcast_message({
-        "type": "output",
-        "data": f"🌐 Server: {url}\n\n"
-    })
+    await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
+    await broadcast_message({"type": "output", "data": "🔍 JELLYFIN LIBRARY SCAN (Instant)\n"})
+    await broadcast_message({"type": "output", "data": f"{'='*60}\n\n"})
+    await broadcast_message({"type": "output", "data": f"🌐 Server: {url}\n\n"})
     
     dv_profile7_files = []
     dv_profile8_files = []
@@ -392,7 +464,6 @@ async def run_jellyfin_scan():
         async with aiohttp.ClientSession() as session:
             headers = {"X-Emby-Token": api_key}
             
-            # Build item types filter based on settings
             include_movies = state.settings.get("include_movies", True)
             include_tv = state.settings.get("include_tv_shows", True)
             
@@ -403,10 +474,7 @@ async def run_jellyfin_scan():
                 item_types.append("Episode")
             
             if not item_types:
-                await broadcast_message({
-                    "type": "output",
-                    "data": "❌ No content types selected. Enable Movies or TV Shows in settings.\n"
-                })
+                await broadcast_message({"type": "output", "data": "❌ No content types selected.\n"})
                 state.is_running = False
                 await broadcast_message({"type": "status", "running": False})
                 return
@@ -414,7 +482,7 @@ async def run_jellyfin_scan():
             type_str = ",".join(item_types)
             type_display = " and ".join(["Movies" if t == "Movie" else "TV Shows" for t in item_types])
             
-            await broadcast_message({"type": "output", "data": f"📡 Fetching {type_display} from Jellyfin...\n"})
+            await broadcast_message({"type": "output", "data": f"📡 Fetching {type_display}...\n"})
             
             params = {
                 "IncludeItemTypes": type_str,
@@ -425,10 +493,7 @@ async def run_jellyfin_scan():
             
             async with session.get(f"{url}/Items", headers=headers, params=params) as resp:
                 if resp.status != 200:
-                    await broadcast_message({
-                        "type": "output",
-                        "data": f"❌ Failed to fetch items: HTTP {resp.status}\n"
-                    })
+                    await broadcast_message({"type": "output", "data": f"❌ Failed: HTTP {resp.status}\n"})
                     state.is_running = False
                     await broadcast_message({"type": "status", "running": False})
                     return
@@ -437,33 +502,14 @@ async def run_jellyfin_scan():
                 items = data.get("Items", [])
             
             total_items = len(items)
-            await broadcast_message({
-                "type": "output",
-                "data": f"📂 Found {total_items} items in library\n\n"
-            })
-            
-            await broadcast_message({
-                "type": "output",
-                "data": f"{'─'*60}\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": "🎬 Analyzing HDR formats...\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": f"{'─'*60}\n\n"
-            })
+            await broadcast_message({"type": "output", "data": f"📂 Found {total_items} items\n\n"})
+            await broadcast_message({"type": "output", "data": "🎬 Analyzing HDR formats...\n\n"})
             
             for i, item in enumerate(items, 1):
                 if state.scan_cancelled:
-                    await broadcast_message({
-                        "type": "output",
-                        "data": "\n⚠️ Scan cancelled by user\n"
-                    })
+                    await broadcast_message({"type": "output", "data": "\n⚠️ Scan cancelled\n"})
                     break
                 
-                # Send progress
                 await broadcast_message({
                     "type": "progress",
                     "data": {
@@ -475,7 +521,6 @@ async def run_jellyfin_scan():
                     }
                 })
                 
-                # Check video streams for HDR info
                 media_streams = item.get("MediaStreams", [])
                 video_stream = next((s for s in media_streams if s.get("Type") == "Video"), None)
                 
@@ -488,198 +533,94 @@ async def run_jellyfin_scan():
                     file_name = item.get("Name", "Unknown")
                     item_type = item.get("Type", "Unknown")
                     
-                    # Check for Dolby Vision
                     is_dv = "DoVi" in video_range_type or "Dolby Vision" in str(hdr_format) or video_stream.get("VideoDoViTitle")
                     
                     if is_dv:
-                        # Check profile
                         dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
                         
                         if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
                             dv_profile7_files.append({
                                 "path": file_path,
                                 "name": file_name,
-                                "hdr": f"Dolby Vision Profile 7",
+                                "hdr": "Dolby Vision Profile 7",
                                 "profile": dovi_title,
-                                "action": "Convert to Profile 8.1",
-                                "type": item_type,
-                                "jellyfin_id": item.get("Id")
+                                "type": item_type
                             })
+                            state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0}
                         else:
                             dv_profile8_files.append({
                                 "path": file_path,
                                 "name": file_name,
-                                "hdr": f"Dolby Vision Profile 8",
+                                "hdr": "Dolby Vision Profile 8",
                                 "profile": dovi_title,
-                                "action": "Already compatible",
-                                "type": item_type,
-                                "jellyfin_id": item.get("Id")
+                                "type": item_type
                             })
+                            state.scan_cache["files"][file_path] = {"profile": "profile8", "mtime": 0}
                     elif "HDR" in video_range or "HDR10" in video_range_type:
-                        hdr10_files.append({
-                            "path": file_path,
-                            "name": file_name,
-                            "hdr": "HDR10",
-                            "type": item_type
-                        })
+                        hdr10_files.append({"path": file_path, "name": file_name, "type": item_type})
+                        state.scan_cache["files"][file_path] = {"profile": "hdr10", "mtime": 0}
                     else:
                         sdr_count += 1
+                        state.scan_cache["files"][file_path] = {"profile": "sdr", "mtime": 0}
             
-            # Show results
-            await broadcast_message({
-                "type": "output",
-                "data": f"\n{'='*60}\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": "📊 SCAN RESULTS\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": f"{'='*60}\n\n"
-            })
+            state.scan_cache["last_scan"] = datetime.now().isoformat()
+            state.save_scan_cache()
             
-            await broadcast_message({
-                "type": "output",
-                "data": f"🎯 DV Profile 7 (need conversion): {len(dv_profile7_files)}\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": f"✅ DV Profile 8 (compatible):       {len(dv_profile8_files)}\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": f"🔶 HDR10:                           {len(hdr10_files)}\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": f"⚪ SDR:                             {sdr_count}\n\n"
-            })
+            # Output results
+            await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
+            await broadcast_message({"type": "output", "data": "📊 SCAN RESULTS\n"})
+            await broadcast_message({"type": "output", "data": f"{'='*60}\n\n"})
+            await broadcast_message({"type": "output", "data": f"🎯 Profile 7 (need conversion): {len(dv_profile7_files)}\n"})
+            await broadcast_message({"type": "output", "data": f"✅ Profile 8 (compatible):       {len(dv_profile8_files)}\n"})
+            await broadcast_message({"type": "output", "data": f"🔶 HDR10:                        {len(hdr10_files)}\n"})
+            await broadcast_message({"type": "output", "data": f"⚪ SDR:                          {sdr_count}\n\n"})
             
-            # Show Profile 7 files
             if dv_profile7_files:
-                await broadcast_message({
-                    "type": "output",
-                    "data": f"{'─'*60}\n"
-                })
-                await broadcast_message({
-                    "type": "output",
-                    "data": "🎯 FILES NEEDING CONVERSION:\n"
-                })
-                await broadcast_message({
-                    "type": "output",
-                    "data": f"{'─'*60}\n\n"
-                })
-                
-                for f in dv_profile7_files:
-                    await broadcast_message({
-                        "type": "output",
-                        "data": f"  📄 {f['name']}\n"
-                    })
-                    await broadcast_message({
-                        "type": "output",
-                        "data": f"     {f['hdr']} ({f['profile']})\n"
-                    })
-                    await broadcast_message({
-                        "type": "output",
-                        "data": f"     📁 {f['path']}\n\n"
-                    })
-            else:
-                await broadcast_message({
-                    "type": "output",
-                    "data": "✅ No files need conversion!\n\n"
-                })
+                await broadcast_message({"type": "output", "data": "🎯 FILES NEEDING CONVERSION:\n\n"})
+                for f in dv_profile7_files[:10]:
+                    await broadcast_message({"type": "output", "data": f"  📄 {f['name']}\n"})
+                if len(dv_profile7_files) > 10:
+                    await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
             
-            # Send results data for UI
             await broadcast_message({
                 "type": "results",
                 "data": {
                     "profile7": dv_profile7_files,
                     "profile8": dv_profile8_files,
-                    "hdr10": hdr10_files,
                     "hdr10_count": len(hdr10_files),
                     "sdr_count": sdr_count,
                     "source": "jellyfin"
                 }
             })
             
-            await broadcast_message({
-                "type": "output",
-                "data": f"{'='*60}\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": "✅ Jellyfin scan complete\n"
-            })
-            await broadcast_message({
-                "type": "output",
-                "data": f"{'='*60}\n"
-            })
+            await broadcast_message({"type": "output", "data": f"\n✅ Jellyfin scan complete\n"})
             
-    except aiohttp.ClientError as e:
-        await broadcast_message({
-            "type": "output",
-            "data": f"\n❌ Connection error: {str(e)}\n"
-        })
     except Exception as e:
-        await broadcast_message({
-            "type": "output",
-            "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"
-        })
+        await broadcast_message({"type": "output", "data": f"\n❌ Error: {str(e)}\n"})
         traceback.print_exc()
     finally:
         state.is_running = False
+        state.current_action = None
         await broadcast_message({"type": "status", "running": False})
+        await broadcast_message({"type": "progress", "data": {"status": "complete"}})
 
 
-async def run_scan():
-    """Run fast Dolby Vision scan using mediainfo."""
+async def run_scan(incremental: bool = True):
+    """Run Dolby Vision scan using mediainfo."""
     state.is_running = True
     state.scan_cancelled = False
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     depth = state.settings.get("scan_depth", 5)
     
-    await broadcast_message({
-        "type": "output", 
-        "data": f"{'='*60}\n"
-    })
-    await broadcast_message({
-        "type": "output", 
-        "data": f"🔍 DOLBY VISION SCAN (Fast Mode)\n"
-    })
-    await broadcast_message({
-        "type": "output", 
-        "data": f"{'='*60}\n\n"
-    })
-    await broadcast_message({
-        "type": "output", 
-        "data": f"📁 Scan path: {scan_path}\n"
-    })
-    await broadcast_message({
-        "type": "output", 
-        "data": f"📊 Scan depth: {depth} levels\n"
-    })
-    
-    # Show content type info
-    include_movies = state.settings.get("include_movies", True)
-    include_tv = state.settings.get("include_tv_shows", True)
-    content_types = []
-    if include_movies:
-        content_types.append("Movies")
-    if include_tv:
-        content_types.append("TV Shows")
-    await broadcast_message({
-        "type": "output", 
-        "data": f"📺 Content types: {', '.join(content_types) if content_types else 'None'}\n"
-    })
-    await broadcast_message({
-        "type": "output", 
-        "data": f"   (File system scan includes all media files)\n\n"
-    })
+    await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
+    await broadcast_message({"type": "output", "data": f"🔍 DOLBY VISION SCAN {'(Incremental)' if incremental else '(Full)'}\n"})
+    await broadcast_message({"type": "output", "data": f"{'='*60}\n\n"})
+    await broadcast_message({"type": "output", "data": f"📁 Scan path: {scan_path}\n"})
+    await broadcast_message({"type": "output", "data": f"📊 Scan depth: {depth} levels\n\n"})
     
     try:
         # Find all MKV files
-        await broadcast_message({"type": "output", "data": "🔎 Searching for MKV files...\n\n"})
+        await broadcast_message({"type": "output", "data": "🔎 Searching for MKV files...\n"})
         
         find_cmd = ["find", scan_path, "-maxdepth", str(depth), "-type", "f", "-name", "*.mkv"]
         find_proc = await asyncio.create_subprocess_exec(
@@ -687,238 +628,240 @@ async def run_scan():
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, stderr = await find_proc.communicate()
-        
+        stdout, _ = await find_proc.communicate()
         mkv_files = [f for f in stdout.decode().strip().split('\n') if f]
         
         if not mkv_files:
-            await broadcast_message({
-                "type": "output", 
-                "data": f"⚠️ No MKV files found in {scan_path}\n"
-            })
-        else:
-            await broadcast_message({
-                "type": "output", 
-                "data": f"📂 Found {len(mkv_files)} MKV file(s)\n\n"
-            })
+            await broadcast_message({"type": "output", "data": f"⚠️ No MKV files found\n"})
+            state.is_running = False
+            await broadcast_message({"type": "status", "running": False})
+            return
+        
+        # Filter files for incremental scan
+        files_to_scan = []
+        skipped = 0
+        
+        for filepath in mkv_files:
+            try:
+                mtime = os.path.getmtime(filepath)
+                cached = state.scan_cache.get("files", {}).get(filepath)
+                
+                if incremental and cached and cached.get("mtime") == mtime:
+                    skipped += 1
+                else:
+                    files_to_scan.append((filepath, mtime))
+            except:
+                files_to_scan.append((filepath, 0))
+        
+        await broadcast_message({"type": "output", "data": f"📂 Found {len(mkv_files)} MKV files\n"})
+        if skipped > 0:
+            await broadcast_message({"type": "output", "data": f"⏭️ Skipping {skipped} unchanged files\n"})
+        await broadcast_message({"type": "output", "data": f"📝 Scanning {len(files_to_scan)} files...\n\n"})
+        
+        if not files_to_scan and skipped > 0:
+            await broadcast_message({"type": "output", "data": "✅ All files cached, no new scans needed\n"})
+        
+        dv_profile7_files = []
+        dv_profile8_files = []
+        hdr10_count = 0
+        sdr_count = 0
+        
+        # Load existing cache results for skipped files
+        for filepath in mkv_files:
+            if filepath not in [f[0] for f in files_to_scan]:
+                cached = state.scan_cache.get("files", {}).get(filepath)
+                if cached:
+                    if cached.get("profile") == "profile7":
+                        dv_profile7_files.append({
+                            "path": filepath,
+                            "name": Path(filepath).name,
+                            "hdr": "Dolby Vision Profile 7",
+                            "cached": True
+                        })
+                    elif cached.get("profile") == "profile8":
+                        dv_profile8_files.append({
+                            "path": filepath,
+                            "name": Path(filepath).name,
+                            "hdr": "Dolby Vision Profile 8",
+                            "cached": True
+                        })
+                    elif cached.get("profile") == "hdr10":
+                        hdr10_count += 1
+                    elif cached.get("profile") == "sdr":
+                        sdr_count += 1
+        
+        # Scan new/changed files
+        for i, (filepath, mtime) in enumerate(files_to_scan, 1):
+            if state.scan_cancelled:
+                await broadcast_message({"type": "output", "data": "\n⚠️ Scan cancelled\n"})
+                break
+            
+            filename = Path(filepath).name
             
             await broadcast_message({
-                "type": "output", 
-                "data": f"{'─'*60}\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": "🎬 Scanning for Dolby Vision using mediainfo (fast)...\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": f"{'─'*60}\n\n"
+                "type": "progress",
+                "data": {
+                    "current": i + skipped,
+                    "total": len(mkv_files),
+                    "percent": round(((i + skipped) / len(mkv_files)) * 100),
+                    "filename": filename,
+                    "status": "scanning"
+                }
             })
             
-            # Results storage
-            dv_profile7_files = []
-            dv_profile8_files = []
-            hdr10_files = []
-            sdr_files = []
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "mediainfo", "--Output=Video;%HDR_Format%\\n%HDR_Format_Profile%",
+                    filepath,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, _ = await proc.communicate()
+                hdr_info = stdout.decode().strip()
+                
+                if "Dolby Vision" in hdr_info:
+                    if "dvhe.07" in hdr_info or "Profile 7" in hdr_info.replace(" ", ""):
+                        dv_profile7_files.append({
+                            "path": filepath,
+                            "name": filename,
+                            "hdr": hdr_info.replace('\n', ' ')
+                        })
+                        state.scan_cache["files"][filepath] = {"profile": "profile7", "mtime": mtime}
+                    else:
+                        dv_profile8_files.append({
+                            "path": filepath,
+                            "name": filename,
+                            "hdr": hdr_info.replace('\n', ' ')
+                        })
+                        state.scan_cache["files"][filepath] = {"profile": "profile8", "mtime": mtime}
+                elif "HDR10" in hdr_info or "SMPTE ST 2086" in hdr_info:
+                    hdr10_count += 1
+                    state.scan_cache["files"][filepath] = {"profile": "hdr10", "mtime": mtime}
+                else:
+                    sdr_count += 1
+                    state.scan_cache["files"][filepath] = {"profile": "sdr", "mtime": mtime}
+                    
+            except Exception:
+                pass
+        
+        state.scan_cache["last_scan"] = datetime.now().isoformat()
+        state.save_scan_cache()
+        
+        # Output results
+        await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
+        await broadcast_message({"type": "output", "data": "📊 SCAN RESULTS\n"})
+        await broadcast_message({"type": "output", "data": f"{'='*60}\n\n"})
+        await broadcast_message({"type": "output", "data": f"🎯 Profile 7 (need conversion): {len(dv_profile7_files)}\n"})
+        await broadcast_message({"type": "output", "data": f"✅ Profile 8 (compatible):       {len(dv_profile8_files)}\n"})
+        await broadcast_message({"type": "output", "data": f"🔶 HDR10:                        {hdr10_count}\n"})
+        await broadcast_message({"type": "output", "data": f"⚪ SDR:                          {sdr_count}\n\n"})
+        
+        if dv_profile7_files:
+            await broadcast_message({"type": "output", "data": "🎯 FILES NEEDING CONVERSION:\n\n"})
+            for f in dv_profile7_files[:10]:
+                await broadcast_message({"type": "output", "data": f"  📄 {f['name']}\n"})
+            if len(dv_profile7_files) > 10:
+                await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
+        
+        await broadcast_message({
+            "type": "results",
+            "data": {
+                "profile7": dv_profile7_files,
+                "profile8": dv_profile8_files,
+                "hdr10_count": hdr10_count,
+                "sdr_count": sdr_count
+            }
+        })
+        
+        await broadcast_message({"type": "output", "data": f"\n✅ Scan complete\n"})
+        
+    except Exception as e:
+        await broadcast_message({"type": "output", "data": f"\n❌ Error: {str(e)}\n"})
+    finally:
+        state.is_running = False
+        state.scan_cancelled = False
+        state.current_action = None
+        await broadcast_message({"type": "status", "running": False})
+        await broadcast_message({"type": "progress", "data": {"status": "complete"}})
+
+
+async def run_convert(files: List[str] = None):
+    """Run conversion on selected files or batch."""
+    state.is_running = True
+    scan_path = state.settings.get("scan_path", MEDIA_PATH)
+    safe_mode = state.settings.get("safe_mode", False)
+    include_simple = state.settings.get("include_simple_fel", False)
+    
+    try:
+        if files:
+            # Convert specific files
+            total = len(files)
+            await broadcast_message({"type": "output", "data": f"🎬 Converting {total} files...\n\n"})
             
-            for i, filepath in enumerate(mkv_files, 1):
-                # Check if cancelled
+            for i, filepath in enumerate(files, 1):
                 if state.scan_cancelled:
-                    await broadcast_message({
-                        "type": "output", 
-                        "data": "\n⚠️ Scan cancelled by user\n"
-                    })
-                    await broadcast_message({
-                        "type": "progress",
-                        "data": {"current": i, "total": len(mkv_files), "status": "cancelled"}
-                    })
+                    await broadcast_message({"type": "output", "data": "\n⚠️ Conversion cancelled\n"})
                     break
                 
                 filename = Path(filepath).name
-                
-                # Send progress update
                 await broadcast_message({
                     "type": "progress",
                     "data": {
                         "current": i,
-                        "total": len(mkv_files),
-                        "percent": round((i / len(mkv_files)) * 100),
+                        "total": total,
+                        "percent": round((i / total) * 100),
                         "filename": filename,
-                        "status": "scanning"
+                        "status": "converting"
                     }
                 })
                 
-                # Show in log every 100 files or for small counts
-                if i % 100 == 0 or i <= 3 or len(mkv_files) < 50:
-                    await broadcast_message({
-                        "type": "output", 
-                        "data": f"[{i}/{len(mkv_files)}] {filename[:50]}...\n"
-                    })
+                await broadcast_message({"type": "output", "data": f"\n[{i}/{total}] {filename}\n"})
                 
-                try:
-                    # Use mediainfo to get HDR format quickly
-                    proc = await asyncio.create_subprocess_exec(
-                        "mediainfo", "--Output=Video;%HDR_Format%\\n%HDR_Format_Profile%",
-                        filepath,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
-                    )
-                    stdout, _ = await proc.communicate()
-                    hdr_info = stdout.decode().strip()
-                    
-                    if "Dolby Vision" in hdr_info:
-                        if "dvhe.07" in hdr_info or "Profile 7" in hdr_info.replace(" ", ""):
-                            dv_profile7_files.append({
-                                "path": filepath,
-                                "name": filename,
-                                "hdr": hdr_info.replace('\n', ' '),
-                                "action": "Convert to Profile 8.1"
-                            })
-                        else:
-                            dv_profile8_files.append({
-                                "path": filepath,
-                                "name": filename,
-                                "hdr": hdr_info.replace('\n', ' '),
-                                "action": "Already compatible"
-                            })
-                    elif "HDR10" in hdr_info or "SMPTE ST 2086" in hdr_info:
-                        hdr10_files.append(filepath)
-                    else:
-                        sdr_files.append(filepath)
-                        
-                except Exception as e:
-                    pass  # Skip files that can't be read
-            
-            # Send results to frontend
-            await broadcast_message({
-                "type": "output", 
-                "data": f"\n{'='*60}\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": "📊 SCAN RESULTS\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": f"{'='*60}\n\n"
-            })
-            
-            await broadcast_message({
-                "type": "output", 
-                "data": f"🎯 DV Profile 7 (need conversion): {len(dv_profile7_files)}\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": f"✅ DV Profile 8 (compatible):       {len(dv_profile8_files)}\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": f"🔶 HDR10:                           {len(hdr10_files)}\n"
-            })
-            await broadcast_message({
-                "type": "output", 
-                "data": f"⚪ SDR:                             {len(sdr_files)}\n\n"
-            })
-            
-            # Show Profile 7 files that need conversion
-            if dv_profile7_files:
-                await broadcast_message({
-                    "type": "output", 
-                    "data": f"{'─'*60}\n"
-                })
-                await broadcast_message({
-                    "type": "output", 
-                    "data": "🎯 FILES NEEDING CONVERSION:\n"
-                })
-                await broadcast_message({
-                    "type": "output", 
-                    "data": f"{'─'*60}\n\n"
-                })
+                cmd = ["dovi_convert", "-y"]
+                if safe_mode:
+                    cmd.append("-safe")
+                cmd.append(filepath)
                 
-                for f in dv_profile7_files:
-                    await broadcast_message({
-                        "type": "output", 
-                        "data": f"  📄 {f['name']}\n"
-                    })
-                    await broadcast_message({
-                        "type": "output", 
-                        "data": f"     HDR: {f['hdr']}\n\n"
-                    })
+                await run_command(cmd, cwd=str(Path(filepath).parent))
+                
+                state.add_to_history(filename, "success")
+                
+                # Update cache - file was converted
+                if filepath in state.scan_cache.get("files", {}):
+                    state.scan_cache["files"][filepath]["profile"] = "profile8"
+                    state.save_scan_cache()
             
-            # Send results data for the results pane
-            await broadcast_message({
-                "type": "results",
-                "data": {
-                    "profile7": dv_profile7_files,
-                    "profile8": dv_profile8_files,
-                    "hdr10_count": len(hdr10_files),
-                    "sdr_count": len(sdr_files)
-                }
-            })
-        
-    except Exception as e:
-        await broadcast_message({"type": "output", "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"})
-    finally:
-        await broadcast_message({
-            "type": "output", 
-            "data": f"\n{'='*60}\n"
-        })
-        await broadcast_message({
-            "type": "output", 
-            "data": "✅ Scan complete\n"
-        })
-        await broadcast_message({
-            "type": "output", 
-            "data": f"{'='*60}\n"
-        })
-        state.is_running = False
-        state.scan_cancelled = False
-        state.current_process = None
-        await broadcast_message({"type": "status", "running": False})
-
-
-async def run_convert():
-    """Run the dovi_convert batch conversion."""
-    state.is_running = True
-    scan_path = state.settings.get("scan_path", MEDIA_PATH)
-    depth = state.settings.get("scan_depth", 5)
-    safe_mode = state.settings.get("safe_mode", False)
-    include_simple = state.settings.get("include_simple_fel", False)
-    
-    await broadcast_message({
-        "type": "output",
-        "data": f"🎬 Starting batch conversion in: {scan_path}\n"
-    })
-    
-    try:
-        cmd = ["dovi_convert", "-batch", str(depth), "-y"]
-        
-        if safe_mode:
-            cmd.append("-safe")
-        
-        if include_simple:
-            cmd.append("-include-simple")
-        
-        await broadcast_message({"type": "output", "data": f"Running: {' '.join(cmd)}\n\n"})
-        await run_command(cmd, cwd=scan_path)
+            await broadcast_message({"type": "conversion_complete", "data": {}})
+        else:
+            # Batch conversion
+            await broadcast_message({"type": "output", "data": f"🎬 Starting batch conversion in: {scan_path}\n"})
+            
+            cmd = ["dovi_convert", "-batch", str(state.settings.get("scan_depth", 5)), "-y"]
+            if safe_mode:
+                cmd.append("-safe")
+            if include_simple:
+                cmd.append("-include-simple")
+            
+            await broadcast_message({"type": "output", "data": f"Running: {' '.join(cmd)}\n\n"})
+            await run_command(cmd, cwd=scan_path)
         
         # Auto cleanup if enabled
         if state.settings.get("auto_cleanup", False):
             await broadcast_message({"type": "output", "data": "\n🧹 Running cleanup...\n"})
             cleanup_cmd = ["dovi_convert", "-cleanup", "-r"]
             await run_command(cleanup_cmd, cwd=scan_path)
-    except FileNotFoundError as e:
-        await broadcast_message({"type": "output", "data": f"\n❌ Command not found: {str(e)}\n"})
+            
     except Exception as e:
-        await broadcast_message({"type": "output", "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"})
+        await broadcast_message({"type": "output", "data": f"\n❌ Error: {str(e)}\n"})
     finally:
         state.is_running = False
-        state.current_process = None
+        state.current_action = None
         await broadcast_message({"type": "status", "running": False})
+        await broadcast_message({"type": "progress", "data": {"status": "complete"}})
 
 
 async def run_command(cmd: list, cwd: str = None):
-    """Run a command and stream output via WebSocket."""
+    """Run a command and stream output."""
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -929,45 +872,85 @@ async def run_command(cmd: list, cwd: str = None):
         
         state.current_process = process
         
-        output_received = False
         while True:
             line = await process.stdout.readline()
             if not line:
                 break
             
-            output_received = True
             text = line.decode('utf-8', errors='replace')
             await broadcast_message({"type": "output", "data": text})
         
         await process.wait()
         
-        if not output_received:
-            await broadcast_message({
-                "type": "output", 
-                "data": "(No output received from command)\n"
-            })
-        
         if process.returncode == 0:
-            await broadcast_message({"type": "output", "data": "\n✅ Process completed successfully\n"})
+            await broadcast_message({"type": "output", "data": "\n✅ Completed successfully\n"})
         else:
-            await broadcast_message({
-                "type": "output", 
-                "data": f"\n⚠️ Process exited with code {process.returncode}\n"
-            })
+            await broadcast_message({"type": "output", "data": f"\n⚠️ Exited with code {process.returncode}\n"})
     except FileNotFoundError:
-        await broadcast_message({
-            "type": "output", 
-            "data": f"❌ Command not found: {cmd[0]}\n"
-        })
+        await broadcast_message({"type": "output", "data": f"❌ Command not found: {cmd[0]}\n"})
     except Exception as e:
-        await broadcast_message({
-            "type": "output", 
-            "data": f"❌ Error running command: {type(e).__name__}: {str(e)}\n"
-        })
+        await broadcast_message({"type": "output", "data": f"❌ Error: {str(e)}\n"})
+
+
+def setup_scheduled_scan():
+    """Setup or cancel scheduled scans based on settings."""
+    # Cancel existing task if any
+    if state.scheduled_task:
+        state.scheduled_task.cancel()
+        state.scheduled_task = None
+    
+    if state.settings.get("schedule_enabled"):
+        state.scheduled_task = asyncio.create_task(run_scheduler())
+
+
+async def run_scheduler():
+    """Background scheduler for automated scans."""
+    while True:
+        try:
+            schedule_time = state.settings.get("schedule_time", "02:00")
+            schedule_days = state.settings.get("schedule_days", [6])
+            
+            now = datetime.now()
+            target_hour, target_minute = map(int, schedule_time.split(":"))
+            
+            # Check if we should run today
+            if now.weekday() in schedule_days:
+                target = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+                
+                if now >= target and now < target.replace(minute=target_minute + 5):
+                    # Time to scan!
+                    if not state.is_running:
+                        await broadcast_message({"type": "output", "data": "\n⏰ Scheduled scan starting...\n"})
+                        
+                        if state.settings.get("use_jellyfin"):
+                            await run_jellyfin_scan()
+                        else:
+                            await run_scan(incremental=True)
+                        
+                        # Auto convert if enabled
+                        if state.settings.get("auto_convert"):
+                            profile7_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "profile7")
+                            if profile7_count > 0:
+                                await broadcast_message({"type": "output", "data": f"\n🔄 Auto-converting {profile7_count} Profile 7 files...\n"})
+                                await run_convert()
+            
+            # Sleep for 1 minute
+            await asyncio.sleep(60)
+            
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"Scheduler error: {e}")
+            await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize scheduler on startup."""
+    if state.settings.get("schedule_enabled"):
+        setup_scheduled_scan()
 
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8080)
-
-
