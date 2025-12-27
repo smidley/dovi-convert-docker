@@ -425,6 +425,146 @@ body::before {
     width: 100%;
 }
 
+/* Jellyfin Section */
+.jellyfin-section {
+    border-top: 1px solid var(--border-color);
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-md) var(--space-lg);
+    cursor: pointer;
+    transition: var(--transition-fast);
+    background: var(--surface-1);
+}
+
+.section-header:hover {
+    background: var(--surface-2);
+}
+
+.jellyfin-icon {
+    color: #a359d9;
+}
+
+.section-header span {
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.toggle-arrow {
+    margin-left: auto;
+    font-size: 0.625rem;
+    transition: transform var(--transition-fast);
+}
+
+.jellyfin-section.collapsed .toggle-arrow {
+    transform: rotate(-90deg);
+}
+
+.jellyfin-settings {
+    padding: var(--space-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    background: var(--bg-tertiary);
+    border-top: 1px solid var(--border-color);
+}
+
+.jellyfin-section.collapsed .jellyfin-settings {
+    display: none;
+}
+
+.jellyfin-settings .setting-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-xs);
+}
+
+.jellyfin-settings .setting-item.checkbox {
+    flex-direction: row;
+    align-items: center;
+}
+
+.jellyfin-settings .setting-item label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+}
+
+.jellyfin-settings .setting-item.checkbox label {
+    font-size: 0.875rem;
+    font-weight: 400;
+    text-transform: none;
+}
+
+.jellyfin-settings input[type="text"],
+.jellyfin-settings input[type="password"] {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface-1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    transition: var(--transition-fast);
+}
+
+.jellyfin-settings input[type="text"]:focus,
+.jellyfin-settings input[type="password"]:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 3px rgba(124, 93, 250, 0.2);
+}
+
+.api-key-group {
+    display: flex;
+    gap: var(--space-sm);
+    width: 100%;
+}
+
+.api-key-group input {
+    flex: 1;
+}
+
+.btn-small {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: 0.75rem;
+}
+
+.jellyfin-status {
+    font-size: 0.8125rem;
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    display: none;
+}
+
+.jellyfin-status.success {
+    display: block;
+    background: rgba(0, 212, 170, 0.15);
+    color: var(--accent-secondary);
+    border: 1px solid rgba(0, 212, 170, 0.3);
+}
+
+.jellyfin-status.error {
+    display: block;
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--accent-danger);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.jellyfin-status.testing {
+    display: block;
+    background: rgba(124, 93, 250, 0.15);
+    color: var(--accent-primary);
+    border: 1px solid rgba(124, 93, 250, 0.3);
+}
+
 /* Progress Bar */
 .progress-container {
     padding: 0 var(--space-lg) var(--space-lg);

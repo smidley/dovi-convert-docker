@@ -43,6 +43,16 @@ class DoViConvertApp {
         this.includeSimpleCheckbox = getEl('includeSimple');
         this.autoCleanupCheckbox = getEl('autoCleanup');
         
+        // Jellyfin
+        this.jellyfinToggle = getEl('jellyfinToggle');
+        this.jellyfinSection = document.querySelector('.jellyfin-section');
+        this.useJellyfinCheckbox = getEl('useJellyfin');
+        this.jellyfinUrlInput = getEl('jellyfinUrl');
+        this.jellyfinApiKeyInput = getEl('jellyfinApiKey');
+        this.toggleApiKeyBtn = getEl('toggleApiKey');
+        this.testJellyfinBtn = getEl('testJellyfin');
+        this.jellyfinStatus = getEl('jellyfinStatus');
+        
         // Buttons
         this.browseBtn = getEl('browseBtn');
         this.scanBtn = getEl('scanBtn');
@@ -84,6 +94,14 @@ class DoViConvertApp {
         addListener(this.safeModeCheckbox, 'change', () => this.saveSettings());
         addListener(this.includeSimpleCheckbox, 'change', () => this.saveSettings());
         addListener(this.autoCleanupCheckbox, 'change', () => this.saveSettings());
+        
+        // Jellyfin settings
+        addListener(this.jellyfinToggle, 'click', () => this.toggleJellyfinSection());
+        addListener(this.useJellyfinCheckbox, 'change', () => this.saveSettings());
+        addListener(this.jellyfinUrlInput, 'change', () => this.saveSettings());
+        addListener(this.jellyfinApiKeyInput, 'change', () => this.saveSettings());
+        addListener(this.toggleApiKeyBtn, 'click', () => this.toggleApiKeyVisibility());
+        addListener(this.testJellyfinBtn, 'click', () => this.testJellyfinConnection());
         
         // Modal
         addListener(this.modalClose, 'click', () => this.closeModal());
@@ -445,6 +463,17 @@ class DoViConvertApp {
         if (settings.auto_cleanup !== undefined) {
             this.autoCleanupCheckbox.checked = settings.auto_cleanup;
         }
+        
+        // Jellyfin settings
+        if (settings.use_jellyfin !== undefined && this.useJellyfinCheckbox) {
+            this.useJellyfinCheckbox.checked = settings.use_jellyfin;
+        }
+        if (settings.jellyfin_url && this.jellyfinUrlInput) {
+            this.jellyfinUrlInput.value = settings.jellyfin_url;
+        }
+        if (settings.jellyfin_api_key && this.jellyfinApiKeyInput) {
+            this.jellyfinApiKeyInput.value = settings.jellyfin_api_key;
+        }
     }
     
     async saveSettings() {
@@ -453,7 +482,10 @@ class DoViConvertApp {
             scan_depth: parseInt(this.scanDepthInput.value, 10),
             safe_mode: this.safeModeCheckbox.checked,
             include_simple_fel: this.includeSimpleCheckbox.checked,
-            auto_cleanup: this.autoCleanupCheckbox.checked
+            auto_cleanup: this.autoCleanupCheckbox.checked,
+            use_jellyfin: this.useJellyfinCheckbox?.checked || false,
+            jellyfin_url: this.jellyfinUrlInput?.value || '',
+            jellyfin_api_key: this.jellyfinApiKeyInput?.value || ''
         };
         
         try {
@@ -464,6 +496,54 @@ class DoViConvertApp {
             });
         } catch (error) {
             console.error('Failed to save settings:', error);
+        }
+    }
+    
+    toggleJellyfinSection() {
+        if (this.jellyfinSection) {
+            this.jellyfinSection.classList.toggle('collapsed');
+        }
+    }
+    
+    toggleApiKeyVisibility() {
+        if (this.jellyfinApiKeyInput) {
+            const type = this.jellyfinApiKeyInput.type;
+            this.jellyfinApiKeyInput.type = type === 'password' ? 'text' : 'password';
+        }
+    }
+    
+    async testJellyfinConnection() {
+        if (!this.jellyfinStatus) return;
+        
+        const url = this.jellyfinUrlInput?.value;
+        const apiKey = this.jellyfinApiKeyInput?.value;
+        
+        if (!url || !apiKey) {
+            this.jellyfinStatus.className = 'jellyfin-status error';
+            this.jellyfinStatus.textContent = 'Please enter Jellyfin URL and API key';
+            return;
+        }
+        
+        // Save settings first
+        await this.saveSettings();
+        
+        this.jellyfinStatus.className = 'jellyfin-status testing';
+        this.jellyfinStatus.textContent = 'Testing connection...';
+        
+        try {
+            const response = await fetch('/api/jellyfin/test', { method: 'POST' });
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                this.jellyfinStatus.className = 'jellyfin-status success';
+                this.jellyfinStatus.textContent = `✓ Connected to ${data.server_name} (v${data.version})`;
+            } else {
+                this.jellyfinStatus.className = 'jellyfin-status error';
+                this.jellyfinStatus.textContent = `✗ ${data.detail || 'Connection failed'}`;
+            }
+        } catch (error) {
+            this.jellyfinStatus.className = 'jellyfin-status error';
+            this.jellyfinStatus.textContent = `✗ ${error.message}`;
         }
     }
     

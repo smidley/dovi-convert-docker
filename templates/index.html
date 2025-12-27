@@ -64,6 +64,52 @@
                         <span class="tooltip" title="Automatically delete backup files after conversion">?</span>
                     </div>
                 </div>
+                
+                <!-- Jellyfin Integration -->
+                <div class="jellyfin-section">
+                    <div class="section-header" id="jellyfinToggle">
+                        <svg class="jellyfin-icon" width="20" height="20" viewBox="0 0 512 512">
+                            <path fill="currentColor" d="M256 0C114.6 0 0 114.6 0 256s114.6 256 256 256 256-114.6 256-256S397.4 0 256 0zm0 64c35.3 0 64 28.7 64 64s-28.7 64-64 64-64-28.7-64-64 28.7-64 64-64zm0 384c-70.7 0-128-57.3-128-128 0-35.3 28.7-64 64-64h128c35.3 0 64 28.7 64 64 0 70.7-57.3 128-128 128z"/>
+                        </svg>
+                        <span>Jellyfin Integration</span>
+                        <span class="toggle-arrow">▼</span>
+                    </div>
+                    
+                    <div class="jellyfin-settings" id="jellyfinSettings">
+                        <div class="setting-item checkbox">
+                            <input type="checkbox" id="useJellyfin">
+                            <label for="useJellyfin">Use Jellyfin for scanning</label>
+                            <span class="tooltip" title="Use Jellyfin's metadata instead of scanning files directly - much faster!">?</span>
+                        </div>
+                        
+                        <div class="setting-item">
+                            <label for="jellyfinUrl">Jellyfin URL</label>
+                            <input type="text" id="jellyfinUrl" placeholder="http://192.168.1.100:8096">
+                        </div>
+                        
+                        <div class="setting-item">
+                            <label for="jellyfinApiKey">API Key</label>
+                            <div class="api-key-group">
+                                <input type="password" id="jellyfinApiKey" placeholder="Enter your Jellyfin API key">
+                                <button class="btn btn-ghost btn-small" id="toggleApiKey" title="Show/Hide">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                        <circle cx="12" cy="12" r="3"></circle>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <button class="btn btn-secondary btn-small" id="testJellyfin">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                                <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                            </svg>
+                            Test Connection
+                        </button>
+                        <div class="jellyfin-status" id="jellyfinStatus"></div>
+                    </div>
+                </div>
 
                 <div class="action-buttons">
                     <button class="btn btn-primary btn-large" id="scanBtn">

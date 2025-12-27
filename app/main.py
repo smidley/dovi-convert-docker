@@ -7,6 +7,7 @@ import asyncio
 import os
 import json
 import traceback
+import aiohttp
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -49,7 +50,10 @@ class AppState:
             "auto_cleanup": False,
             "safe_mode": False,
             "include_simple_fel": False,
-            "scan_depth": 5
+            "scan_depth": 5,
+            "jellyfin_url": "",
+            "jellyfin_api_key": "",
+            "use_jellyfin": False
         }
     
     def save_settings(self):
@@ -67,6 +71,9 @@ class SettingsUpdate(BaseModel):
     safe_mode: Optional[bool] = None
     include_simple_fel: Optional[bool] = None
     scan_depth: Optional[int] = None
+    jellyfin_url: Optional[str] = None
+    jellyfin_api_key: Optional[str] = None
+    use_jellyfin: Optional[bool] = None
 
 
 @app.get("/")
@@ -131,8 +138,8 @@ async def get_settings():
 async def update_settings(settings: SettingsUpdate):
     """Update application settings."""
     if settings.scan_path is not None:
-        # Validate path exists
-        if not Path(settings.scan_path).exists():
+        # Validate path exists (only if not using Jellyfin)
+        if not state.settings.get("use_jellyfin") and not Path(settings.scan_path).exists():
             raise HTTPException(status_code=400, detail="Path does not exist")
         state.settings["scan_path"] = settings.scan_path
     
@@ -147,6 +154,15 @@ async def update_settings(settings: SettingsUpdate):
     
     if settings.scan_depth is not None:
         state.settings["scan_depth"] = max(1, min(10, settings.scan_depth))
+    
+    if settings.jellyfin_url is not None:
+        state.settings["jellyfin_url"] = settings.jellyfin_url.rstrip('/')
+    
+    if settings.jellyfin_api_key is not None:
+        state.settings["jellyfin_api_key"] = settings.jellyfin_api_key
+    
+    if settings.use_jellyfin is not None:
+        state.settings["use_jellyfin"] = settings.use_jellyfin
     
     state.save_settings()
     return state.settings
@@ -177,6 +193,32 @@ async def browse_directory(path: str = "/"):
         raise HTTPException(status_code=403, detail="Permission denied")
 
 
+@app.post("/api/jellyfin/test")
+async def test_jellyfin():
+    """Test Jellyfin connection."""
+    url = state.settings.get("jellyfin_url", "")
+    api_key = state.settings.get("jellyfin_api_key", "")
+    
+    if not url or not api_key:
+        raise HTTPException(status_code=400, detail="Jellyfin URL and API key are required")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"X-Emby-Token": api_key}
+            async with session.get(f"{url}/System/Info", headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return {
+                        "success": True,
+                        "server_name": data.get("ServerName", "Unknown"),
+                        "version": data.get("Version", "Unknown")
+                    }
+                else:
+                    raise HTTPException(status_code=resp.status, detail="Failed to connect to Jellyfin")
+    except aiohttp.ClientError as e:
+        raise HTTPException(status_code=500, detail=f"Connection error: {str(e)}")
+
+
 @app.post("/api/scan")
 async def start_scan():
     """Start a scan operation."""
@@ -184,7 +226,21 @@ async def start_scan():
         raise HTTPException(status_code=409, detail="A process is already running")
     
     await broadcast_message({"type": "status", "running": True, "action": "scan"})
-    asyncio.create_task(run_scan())
+    
+    # Use Jellyfin if enabled
+    if state.settings.get("use_jellyfin"):
+        jellyfin_url = state.settings.get("jellyfin_url", "")
+        jellyfin_key = state.settings.get("jellyfin_api_key", "")
+        
+        if not jellyfin_url or not jellyfin_key:
+            await broadcast_message({"type": "output", "data": "❌ Jellyfin URL and API key are required\n"})
+            await broadcast_message({"type": "status", "running": False})
+            return {"status": "error", "message": "Jellyfin not configured"}
+        
+        asyncio.create_task(run_jellyfin_scan())
+    else:
+        asyncio.create_task(run_scan())
+    
     return {"status": "started", "action": "scan"}
 
 
@@ -280,6 +336,259 @@ async def broadcast_message(message: dict):
     for client in disconnected:
         if client in state.websocket_clients:
             state.websocket_clients.remove(client)
+
+
+async def run_jellyfin_scan():
+    """Scan Jellyfin library for Dolby Vision files - instant metadata access."""
+    state.is_running = True
+    state.scan_cancelled = False
+    
+    url = state.settings.get("jellyfin_url", "")
+    api_key = state.settings.get("jellyfin_api_key", "")
+    
+    await broadcast_message({
+        "type": "output",
+        "data": f"{'='*60}\n"
+    })
+    await broadcast_message({
+        "type": "output",
+        "data": "🔍 JELLYFIN LIBRARY SCAN (Instant)\n"
+    })
+    await broadcast_message({
+        "type": "output",
+        "data": f"{'='*60}\n\n"
+    })
+    await broadcast_message({
+        "type": "output",
+        "data": f"🌐 Server: {url}\n\n"
+    })
+    
+    dv_profile7_files = []
+    dv_profile8_files = []
+    hdr10_files = []
+    sdr_count = 0
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"X-Emby-Token": api_key}
+            
+            # Get all movies with video info
+            await broadcast_message({"type": "output", "data": "📡 Fetching library items from Jellyfin...\n"})
+            
+            params = {
+                "IncludeItemTypes": "Movie,Episode",
+                "Recursive": "true",
+                "Fields": "MediaStreams,Path",
+                "Limit": "10000"
+            }
+            
+            async with session.get(f"{url}/Items", headers=headers, params=params) as resp:
+                if resp.status != 200:
+                    await broadcast_message({
+                        "type": "output",
+                        "data": f"❌ Failed to fetch items: HTTP {resp.status}\n"
+                    })
+                    state.is_running = False
+                    await broadcast_message({"type": "status", "running": False})
+                    return
+                
+                data = await resp.json()
+                items = data.get("Items", [])
+            
+            total_items = len(items)
+            await broadcast_message({
+                "type": "output",
+                "data": f"📂 Found {total_items} items in library\n\n"
+            })
+            
+            await broadcast_message({
+                "type": "output",
+                "data": f"{'─'*60}\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": "🎬 Analyzing HDR formats...\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": f"{'─'*60}\n\n"
+            })
+            
+            for i, item in enumerate(items, 1):
+                if state.scan_cancelled:
+                    await broadcast_message({
+                        "type": "output",
+                        "data": "\n⚠️ Scan cancelled by user\n"
+                    })
+                    break
+                
+                # Send progress
+                await broadcast_message({
+                    "type": "progress",
+                    "data": {
+                        "current": i,
+                        "total": total_items,
+                        "percent": round((i / total_items) * 100),
+                        "filename": item.get("Name", "Unknown"),
+                        "status": "scanning"
+                    }
+                })
+                
+                # Check video streams for HDR info
+                media_streams = item.get("MediaStreams", [])
+                video_stream = next((s for s in media_streams if s.get("Type") == "Video"), None)
+                
+                if video_stream:
+                    video_range = video_stream.get("VideoRange", "")
+                    video_range_type = video_stream.get("VideoRangeType", "")
+                    hdr_format = video_stream.get("VideoDoViTitle", "") or video_stream.get("Title", "")
+                    
+                    file_path = item.get("Path", "")
+                    file_name = item.get("Name", "Unknown")
+                    item_type = item.get("Type", "Unknown")
+                    
+                    # Check for Dolby Vision
+                    is_dv = "DoVi" in video_range_type or "Dolby Vision" in str(hdr_format) or video_stream.get("VideoDoViTitle")
+                    
+                    if is_dv:
+                        # Check profile
+                        dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
+                        
+                        if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
+                            dv_profile7_files.append({
+                                "path": file_path,
+                                "name": file_name,
+                                "hdr": f"Dolby Vision Profile 7",
+                                "profile": dovi_title,
+                                "action": "Convert to Profile 8.1",
+                                "type": item_type,
+                                "jellyfin_id": item.get("Id")
+                            })
+                        else:
+                            dv_profile8_files.append({
+                                "path": file_path,
+                                "name": file_name,
+                                "hdr": f"Dolby Vision Profile 8",
+                                "profile": dovi_title,
+                                "action": "Already compatible",
+                                "type": item_type,
+                                "jellyfin_id": item.get("Id")
+                            })
+                    elif "HDR" in video_range or "HDR10" in video_range_type:
+                        hdr10_files.append({
+                            "path": file_path,
+                            "name": file_name,
+                            "hdr": "HDR10",
+                            "type": item_type
+                        })
+                    else:
+                        sdr_count += 1
+            
+            # Show results
+            await broadcast_message({
+                "type": "output",
+                "data": f"\n{'='*60}\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": "📊 SCAN RESULTS\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": f"{'='*60}\n\n"
+            })
+            
+            await broadcast_message({
+                "type": "output",
+                "data": f"🎯 DV Profile 7 (need conversion): {len(dv_profile7_files)}\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": f"✅ DV Profile 8 (compatible):       {len(dv_profile8_files)}\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": f"🔶 HDR10:                           {len(hdr10_files)}\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": f"⚪ SDR:                             {sdr_count}\n\n"
+            })
+            
+            # Show Profile 7 files
+            if dv_profile7_files:
+                await broadcast_message({
+                    "type": "output",
+                    "data": f"{'─'*60}\n"
+                })
+                await broadcast_message({
+                    "type": "output",
+                    "data": "🎯 FILES NEEDING CONVERSION:\n"
+                })
+                await broadcast_message({
+                    "type": "output",
+                    "data": f"{'─'*60}\n\n"
+                })
+                
+                for f in dv_profile7_files:
+                    await broadcast_message({
+                        "type": "output",
+                        "data": f"  📄 {f['name']}\n"
+                    })
+                    await broadcast_message({
+                        "type": "output",
+                        "data": f"     {f['hdr']} ({f['profile']})\n"
+                    })
+                    await broadcast_message({
+                        "type": "output",
+                        "data": f"     📁 {f['path']}\n\n"
+                    })
+            else:
+                await broadcast_message({
+                    "type": "output",
+                    "data": "✅ No files need conversion!\n\n"
+                })
+            
+            # Send results data for UI
+            await broadcast_message({
+                "type": "results",
+                "data": {
+                    "profile7": dv_profile7_files,
+                    "profile8": dv_profile8_files,
+                    "hdr10": hdr10_files,
+                    "hdr10_count": len(hdr10_files),
+                    "sdr_count": sdr_count,
+                    "source": "jellyfin"
+                }
+            })
+            
+            await broadcast_message({
+                "type": "output",
+                "data": f"{'='*60}\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": "✅ Jellyfin scan complete\n"
+            })
+            await broadcast_message({
+                "type": "output",
+                "data": f"{'='*60}\n"
+            })
+            
+    except aiohttp.ClientError as e:
+        await broadcast_message({
+            "type": "output",
+            "data": f"\n❌ Connection error: {str(e)}\n"
+        })
+    except Exception as e:
+        await broadcast_message({
+            "type": "output",
+            "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"
+        })
+        traceback.print_exc()
+    finally:
+        state.is_running = False
+        await broadcast_message({"type": "status", "running": False})
 
 
 async def run_scan():
