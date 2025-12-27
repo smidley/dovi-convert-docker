@@ -18,6 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import subprocess
 
@@ -35,6 +36,25 @@ app = FastAPI(title="DoVi Convert", version="1.1.0")
 # Mount static files and templates
 app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 templates = Jinja2Templates(directory="/app/templates")
+
+
+# Favicon routes (browser requests these at root level)
+@app.get("/favicon.ico")
+async def favicon():
+    return FileResponse("/app/static/favicon.svg", media_type="image/svg+xml")
+
+
+@app.get("/favicon.svg")
+async def favicon_svg():
+    return FileResponse("/app/static/favicon.svg", media_type="image/svg+xml")
+
+
+@app.get("/apple-touch-icon.png")
+@app.get("/apple-touch-icon-precomposed.png")
+async def apple_touch_icon():
+    # Return the SVG as a fallback (browsers handle this gracefully)
+    return FileResponse("/app/static/favicon.svg", media_type="image/svg+xml")
+
 
 # Configuration
 MEDIA_PATH = os.environ.get("MEDIA_PATH", "/media")
@@ -1299,13 +1319,13 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         output_lines = []
         saw_error = False
         saw_success = False
+        buffer = ""
+        last_progress_update = 0
         
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
+        async def process_line(text):
+            """Process a single line of output"""
+            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update
             
-            text = line.decode('utf-8', errors='replace')
             output_lines.append(text)
             await broadcast_message({"type": "output", "data": text})
             
@@ -1324,7 +1344,8 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                     current_step = step_name
                     break
             
-            # Parse percentage from output
+            # Parse percentage from output (also check for carriage return progress)
+            # dovi_convert uses \r for progress updates on same line
             percent_match = percent_pattern.search(text)
             if percent_match:
                 try:
@@ -1332,43 +1353,72 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                 except:
                     pass
             
-            # Send progress update with ETA calculation
-            overall_percent = round(((file_num - 1) / total_files) * 100 + (file_percent / total_files))
+            # Send progress update (throttle to avoid flooding)
             current_time = asyncio.get_event_loop().time()
-            elapsed = current_time - start_time
+            if current_time - last_progress_update >= 0.5:  # Update every 500ms max
+                last_progress_update = current_time
+                elapsed = current_time - start_time
+                
+                # Calculate ETA based on file progress
+                eta_str = ""
+                if file_percent > 5 and elapsed > 2:  # Need some progress to estimate
+                    estimated_total = elapsed / (file_percent / 100)
+                    remaining = estimated_total - elapsed
+                    if remaining > 0:
+                        if remaining < 60:
+                            eta_str = f"{int(remaining)}s"
+                        elif remaining < 3600:
+                            mins = int(remaining // 60)
+                            secs = int(remaining % 60)
+                            eta_str = f"{mins}m {secs}s"
+                        else:
+                            hours = int(remaining // 3600)
+                            mins = int((remaining % 3600) // 60)
+                            eta_str = f"{hours}h {mins}m"
+                
+                overall_percent = round(((file_num - 1) / total_files) * 100 + (file_percent / total_files))
+                await broadcast_message({
+                    "type": "progress",
+                    "data": {
+                        "current": file_num,
+                        "total": total_files,
+                        "percent": overall_percent,
+                        "filename": filename,
+                        "filepath": cwd,
+                        "status": "converting",
+                        "step": current_step,
+                        "file_percent": file_percent,
+                        "eta": eta_str,
+                        "elapsed": int(elapsed)
+                    }
+                })
+        
+        while True:
+            # Read in chunks to handle long lines without newlines (like progress bars)
+            try:
+                chunk = await process.stdout.read(4096)
+            except Exception as read_error:
+                logger.warning(f"Read error (continuing): {read_error}")
+                break
+                
+            if not chunk:
+                # Process any remaining buffer
+                if buffer.strip():
+                    await process_line(buffer)
+                break
             
-            # Calculate ETA based on file progress
-            eta_str = ""
-            if file_percent > 5 and elapsed > 2:  # Need some progress to estimate
-                estimated_total = elapsed / (file_percent / 100)
-                remaining = estimated_total - elapsed
-                if remaining > 0:
-                    if remaining < 60:
-                        eta_str = f"{int(remaining)}s"
-                    elif remaining < 3600:
-                        mins = int(remaining // 60)
-                        secs = int(remaining % 60)
-                        eta_str = f"{mins}m {secs}s"
-                    else:
-                        hours = int(remaining // 3600)
-                        mins = int((remaining % 3600) // 60)
-                        eta_str = f"{hours}h {mins}m"
+            # Decode and add to buffer
+            text = chunk.decode('utf-8', errors='replace')
+            buffer += text
             
-            await broadcast_message({
-                "type": "progress",
-                "data": {
-                    "current": file_num,
-                    "total": total_files,
-                    "percent": overall_percent,
-                    "filename": filename,
-                    "filepath": cwd,  # Send filepath for result list matching
-                    "status": "converting",
-                    "step": current_step,
-                    "file_percent": file_percent,
-                    "eta": eta_str,
-                    "elapsed": int(elapsed)
-                }
-            })
+            # Handle carriage returns (progress updates) - treat as line breaks
+            buffer = buffer.replace('\r\n', '\n').replace('\r', '\n')
+            
+            # Process complete lines from buffer
+            while '\n' in buffer:
+                line, buffer = buffer.split('\n', 1)
+                if line.strip():  # Only process non-empty lines
+                    await process_line(line + '\n')
         
         await process.wait()
         logger.info(f"Process exited with code {process.returncode}")
