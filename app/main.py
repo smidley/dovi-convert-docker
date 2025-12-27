@@ -1263,10 +1263,14 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         cmd_str = " ".join(shlex.quote(c) for c in cmd)
         logger.info(f"Command: {cmd_str}")
         
+        # Pipe 'y' to handle Simple FEL confirmation prompt (script bug: -y doesn't auto-confirm this)
+        # Multiple 'y' answers in case there are multiple prompts
+        full_cmd = f"echo 'y\ny\ny' | {cmd_str}"
+        
         await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n\n"})
         
         process = await asyncio.create_subprocess_shell(
-            cmd_str,
+            full_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=cwd
