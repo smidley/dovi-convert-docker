@@ -774,7 +774,7 @@ class DoViConvertApp {
                 } else {
                     this.showPopup(`Scan complete: No Profile 7 files found`, 'info');
                 }
-                // Switch to results tab
+                // Switch to results tab (only on fresh scan completion)
                 this.switchTab('results');
                 break;
             case 'progress':
@@ -980,7 +980,8 @@ class DoViConvertApp {
         
         this.applyFilters();
         this.updateSelectionUI();
-        this.switchTab('results');
+        // Don't auto-switch tab here - let the caller decide
+        // Tab switching happens in WebSocket handler for fresh scan results
     }
     
     renderResultsPage() {
