@@ -81,6 +81,7 @@ class DoViConvertApp {
         this.browseBtn = getEl('browseBtn');
         this.scanBtn = getEl('scanBtn');
         this.convertBtn = getEl('convertBtn');
+        this.convertQueueBtn = getEl('convertQueueBtn');
         this.stopBtn = getEl('stopBtn');
         this.clearBtn = getEl('clearBtn');
         this.addToQueueBtn = getEl('addToQueueBtn');
@@ -119,6 +120,7 @@ class DoViConvertApp {
         // Action buttons
         addListener(this.scanBtn, 'click', () => this.startScan());
         addListener(this.convertBtn, 'click', () => this.convertSelected());
+        addListener(this.convertQueueBtn, 'click', () => this.startQueue());
         addListener(this.stopBtn, 'click', () => this.stopProcess());
         addListener(this.clearBtn, 'click', () => this.clearTerminal());
         
@@ -332,6 +334,7 @@ class DoViConvertApp {
     renderQueue() {
         const list = document.getElementById('queueList');
         const countBadge = document.getElementById('queueCount');
+        const countBadgeBtn = document.getElementById('queueCountBtn');
         const startBtn = this.startQueueBtn;
         
         if (countBadge) {
@@ -339,8 +342,17 @@ class DoViConvertApp {
             countBadge.style.display = this.conversionQueue.length > 0 ? 'inline' : 'none';
         }
         
+        // Update the action button queue count
+        if (countBadgeBtn) {
+            countBadgeBtn.textContent = this.conversionQueue.length;
+        }
+        
+        // Enable/disable both queue buttons
         if (startBtn) {
             startBtn.disabled = this.conversionQueue.length === 0;
+        }
+        if (this.convertQueueBtn) {
+            this.convertQueueBtn.disabled = this.conversionQueue.length === 0;
         }
         
         if (!list) return;
