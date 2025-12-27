@@ -1200,6 +1200,8 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         # Join command into a string for shell execution
         cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
         
+        await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n\n"})
+        
         process = await asyncio.create_subprocess_shell(
             cmd_str,
             stdout=asyncio.subprocess.PIPE,
