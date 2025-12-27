@@ -50,8 +50,6 @@ class DoViConvertApp {
         this.autoCleanupCheckbox = getEl('autoCleanup');
         
         // Jellyfin
-        this.jellyfinToggle = getEl('jellyfinToggle');
-        this.jellyfinSection = document.querySelector('.jellyfin-section');
         this.useJellyfinCheckbox = getEl('useJellyfin');
         this.jellyfinUrlInput = getEl('jellyfinUrl');
         this.jellyfinApiKeyInput = getEl('jellyfinApiKey');
@@ -102,8 +100,10 @@ class DoViConvertApp {
         addListener(this.autoCleanupCheckbox, 'change', () => this.saveSettings());
         
         // Jellyfin settings
-        addListener(this.jellyfinToggle, 'click', () => this.toggleJellyfinSection());
-        addListener(this.useJellyfinCheckbox, 'change', () => this.saveSettings());
+        addListener(this.useJellyfinCheckbox, 'change', () => {
+            this.saveSettings();
+            this.updateScanModeIndicator();
+        });
         addListener(this.jellyfinUrlInput, 'change', () => this.saveSettings());
         addListener(this.jellyfinApiKeyInput, 'change', () => this.saveSettings());
         addListener(this.toggleApiKeyBtn, 'click', () => this.toggleApiKeyVisibility());
@@ -127,10 +127,42 @@ class DoViConvertApp {
         // Initialize tooltips
         this.initTooltips();
         
-        // Tab switching
+        // Tab switching (output panel)
         document.querySelectorAll('.tab-btn').forEach(btn => {
             btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
         });
+        
+        // Control panel tab switching
+        document.querySelectorAll('.control-tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.switchControlTab(btn.dataset.controlTab));
+        });
+    }
+    
+    switchControlTab(tabName) {
+        const tabs = document.querySelectorAll('.control-tab-btn');
+        const contents = document.querySelectorAll('.control-tab-content');
+        
+        tabs.forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.controlTab === tabName);
+        });
+        
+        contents.forEach(content => {
+            content.classList.toggle('active', content.id === tabName + 'Tab');
+        });
+    }
+    
+    updateScanModeIndicator() {
+        const indicator = document.getElementById('scanModeValue');
+        if (!indicator) return;
+        
+        const useJellyfin = this.useJellyfinCheckbox?.checked;
+        if (useJellyfin) {
+            indicator.textContent = 'Jellyfin (instant)';
+            indicator.classList.add('jellyfin');
+        } else {
+            indicator.textContent = 'File System (mediainfo)';
+            indicator.classList.remove('jellyfin');
+        }
     }
     
     initTooltips() {
@@ -536,6 +568,9 @@ class DoViConvertApp {
         if (settings.jellyfin_api_key && this.jellyfinApiKeyInput) {
             this.jellyfinApiKeyInput.value = settings.jellyfin_api_key;
         }
+        
+        // Update the scan mode indicator
+        this.updateScanModeIndicator();
     }
     
     async saveSettings() {
@@ -558,12 +593,6 @@ class DoViConvertApp {
             });
         } catch (error) {
             console.error('Failed to save settings:', error);
-        }
-    }
-    
-    toggleJellyfinSection() {
-        if (this.jellyfinSection) {
-            this.jellyfinSection.classList.toggle('collapsed');
         }
     }
     
