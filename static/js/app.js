@@ -489,7 +489,8 @@ class DoViConvertApp {
             if (stats.history.length === 0) {
                 historyList.innerHTML = '<p class="empty-history">No conversions yet.</p>';
             } else {
-                historyList.innerHTML = stats.history.slice(0, 10).map(h => {
+                // Show newest items first (reverse the array, then take first 10)
+                historyList.innerHTML = [...stats.history].reverse().slice(0, 10).map(h => {
                     const statusIcon = h.status === 'success' ? '✅' : '❌';
                     const statusClass = h.status === 'success' ? 'success' : 'failed';
                     const logId = h.log_id || '';
@@ -1193,7 +1194,7 @@ class DoViConvertApp {
         
         // Save settings if not a silent check
         if (!silent) {
-            await this.saveSettings();
+        await this.saveSettings();
         }
         
         // Update UI to show testing
