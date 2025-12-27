@@ -487,7 +487,7 @@ async def run_jellyfin_scan():
             params = {
                 "IncludeItemTypes": type_str,
                 "Recursive": "true",
-                "Fields": "MediaStreams,Path",
+                "Fields": "MediaStreams,Path,MediaSources",
                 "Limit": "10000"
             }
             
@@ -533,31 +533,61 @@ async def run_jellyfin_scan():
                     file_name = item.get("Name", "Unknown")
                     item_type = item.get("Type", "Unknown")
                     
+                    # Extract media details
+                    width = video_stream.get("Width", 0)
+                    height = video_stream.get("Height", 0)
+                    resolution = f"{width}x{height}" if width and height else ""
+                    if height >= 2160:
+                        resolution = "4K UHD"
+                    elif height >= 1080:
+                        resolution = "1080p"
+                    elif height >= 720:
+                        resolution = "720p"
+                    
+                    codec = video_stream.get("Codec", "") or video_stream.get("VideoCodec", "")
+                    if "hevc" in codec.lower() or "h265" in codec.lower():
+                        codec = "HEVC"
+                    elif "avc" in codec.lower() or "h264" in codec.lower():
+                        codec = "H.264"
+                    
+                    bitrate = video_stream.get("BitRate", 0)
+                    bitrate_str = f"{bitrate // 1000000} Mbps" if bitrate else ""
+                    
+                    # Get file size from item
+                    media_sources = item.get("MediaSources", [{}])
+                    file_size = media_sources[0].get("Size", 0) if media_sources else 0
+                    
                     is_dv = "DoVi" in video_range_type or "Dolby Vision" in str(hdr_format) or video_stream.get("VideoDoViTitle")
+                    
+                    media_info = {
+                        "path": file_path,
+                        "name": file_name,
+                        "type": item_type,
+                        "resolution": resolution,
+                        "codec": codec,
+                        "bitrate": bitrate_str,
+                        "size": file_size
+                    }
                     
                     if is_dv:
                         dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
                         
                         if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
                             dv_profile7_files.append({
-                                "path": file_path,
-                                "name": file_name,
+                                **media_info,
                                 "hdr": "Dolby Vision Profile 7",
                                 "profile": dovi_title,
-                                "type": item_type
                             })
                             state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0}
                         else:
                             dv_profile8_files.append({
-                                "path": file_path,
-                                "name": file_name,
+                                **media_info,
                                 "hdr": "Dolby Vision Profile 8",
                                 "profile": dovi_title,
-                                "type": item_type
                             })
                             state.scan_cache["files"][file_path] = {"profile": "profile8", "mtime": 0}
                     elif "HDR" in video_range or "HDR10" in video_range_type:
-                        hdr10_files.append({"path": file_path, "name": file_name, "type": item_type})
+                        hdr10_files.append({**media_info, "hdr": "HDR10"})
                         state.scan_cache["files"][file_path] = {"profile": "hdr10", "mtime": 0}
                     else:
                         sdr_count += 1
@@ -710,31 +740,74 @@ async def run_scan(incremental: bool = True):
             })
             
             try:
+                # Get HDR format and media details
                 proc = await asyncio.create_subprocess_exec(
-                    "mediainfo", "--Output=Video;%HDR_Format%\\n%HDR_Format_Profile%",
+                    "mediainfo", "--Output=Video;%HDR_Format%\\n%HDR_Format_Profile%\\n%Width%\\n%Height%\\n%Format%\\n%BitRate%",
                     filepath,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE
                 )
                 stdout, _ = await proc.communicate()
-                hdr_info = stdout.decode().strip()
+                parts = stdout.decode().strip().split('\n')
                 
-                if "Dolby Vision" in hdr_info:
-                    if "dvhe.07" in hdr_info or "Profile 7" in hdr_info.replace(" ", ""):
+                hdr_info = parts[0] if len(parts) > 0 else ""
+                hdr_profile = parts[1] if len(parts) > 1 else ""
+                width = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+                height = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+                codec = parts[4] if len(parts) > 4 else ""
+                bitrate = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else 0
+                
+                # Format resolution
+                resolution = ""
+                if height >= 2160:
+                    resolution = "4K UHD"
+                elif height >= 1080:
+                    resolution = "1080p"
+                elif height >= 720:
+                    resolution = "720p"
+                elif height > 0:
+                    resolution = f"{width}x{height}"
+                
+                # Format codec
+                if "HEVC" in codec or "H.265" in codec:
+                    codec = "HEVC"
+                elif "AVC" in codec or "H.264" in codec:
+                    codec = "H.264"
+                
+                # Format bitrate
+                bitrate_str = f"{bitrate // 1000000} Mbps" if bitrate else ""
+                
+                # Get file size
+                try:
+                    file_size = os.path.getsize(filepath)
+                except:
+                    file_size = 0
+                
+                full_hdr_info = f"{hdr_info} {hdr_profile}".strip()
+                
+                media_info = {
+                    "path": filepath,
+                    "name": filename,
+                    "resolution": resolution,
+                    "codec": codec,
+                    "bitrate": bitrate_str,
+                    "size": file_size
+                }
+                
+                if "Dolby Vision" in full_hdr_info:
+                    if "dvhe.07" in full_hdr_info or "Profile 7" in full_hdr_info.replace(" ", ""):
                         dv_profile7_files.append({
-                            "path": filepath,
-                            "name": filename,
-                            "hdr": hdr_info.replace('\n', ' ')
+                            **media_info,
+                            "hdr": full_hdr_info
                         })
                         state.scan_cache["files"][filepath] = {"profile": "profile7", "mtime": mtime}
                     else:
                         dv_profile8_files.append({
-                            "path": filepath,
-                            "name": filename,
-                            "hdr": hdr_info.replace('\n', ' ')
+                            **media_info,
+                            "hdr": full_hdr_info
                         })
                         state.scan_cache["files"][filepath] = {"profile": "profile8", "mtime": mtime}
-                elif "HDR10" in hdr_info or "SMPTE ST 2086" in hdr_info:
+                elif "HDR10" in full_hdr_info or "SMPTE ST 2086" in full_hdr_info:
                     hdr10_count += 1
                     state.scan_cache["files"][filepath] = {"profile": "hdr10", "mtime": mtime}
                 else:

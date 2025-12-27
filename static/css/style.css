@@ -905,6 +905,55 @@ body::before {
     margin-top: 2px;
 }
 
+.result-item .file-hdr {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: 4px;
+    flex-wrap: wrap;
+}
+
+.result-item .hdr-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(124, 93, 250, 0.15);
+    color: var(--accent-primary);
+}
+
+.result-item .hdr-badge.profile7 {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-warning);
+}
+
+.result-item .hdr-badge.profile8 {
+    background: rgba(0, 212, 170, 0.15);
+    color: var(--accent-secondary);
+}
+
+.result-item .media-details {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.result-item .file-path {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.result-item .file-path svg {
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
 .result-item .file-action {
     flex-shrink: 0;
     margin-left: var(--space-md);

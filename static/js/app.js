@@ -736,19 +736,40 @@ class DoViConvertApp {
             const badgeClass = file.type === 'convert' ? 'convert' : 'compatible';
             const badgeText = file.type === 'convert' ? 'Needs Conversion' : 'Compatible';
             
+            // Build media details string
+            const details = [];
+            if (file.resolution) details.push(file.resolution);
+            if (file.codec) details.push(file.codec);
+            if (file.size) details.push(this.formatSize(file.size));
+            if (file.bitrate) details.push(file.bitrate);
+            const detailsStr = details.length > 0 ? details.join(' • ') : '';
+            
+            // Get directory path (parent folder)
+            const pathParts = (file.path || '').split('/');
+            const parentDir = pathParts.slice(0, -1).join('/') || '/';
+            
             item.innerHTML = `
                 <input type="checkbox" class="result-checkbox" 
                     ${isSelected ? 'checked' : ''} 
                     ${file.type === 'compatible' ? 'disabled title="Only Profile 7 files can be converted"' : ''}
                     onchange="app.toggleFileSelection('${file.path?.replace(/'/g, "\\'")}', this.checked)">
                 <div class="file-info">
-                    <div class="file-name" title="${file.path || file.name}">${file.name}</div>
-                    <div class="file-meta">${file.hdr || file.profile || 'Dolby Vision'}</div>
+                    <div class="file-name" title="${file.name}">${file.name}</div>
+                    <div class="file-hdr">
+                        <span class="hdr-badge ${file.profileType || ''}">${file.hdr || file.profile || 'Dolby Vision'}</span>
+                        ${detailsStr ? `<span class="media-details">${detailsStr}</span>` : ''}
+                    </div>
+                    <div class="file-path" title="${file.path}">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        ${parentDir}
+                    </div>
                 </div>
                 <div class="file-action">
                     <span class="badge ${badgeClass}">${badgeText}</span>
-            </div>
-        `;
+                </div>
+            `;
             list.appendChild(item);
         });
         
@@ -1096,4 +1117,5 @@ document.addEventListener('DOMContentLoaded', () => {
         document.body.innerHTML = `<pre style="color: red; padding: 20px;">Error: ${error.message}\n\n${error.stack}</pre>`;
     }
 });
+
 
