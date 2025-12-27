@@ -301,8 +301,8 @@ async def get_cached_results():
     
     return {
         "results": {
-            "convert": dv_profile7_files,
-            "compatible": dv_profile8_files
+            "profile7": dv_profile7_files,
+            "profile8": dv_profile8_files
         },
         "last_scan": last_scan
     }
