@@ -1178,6 +1178,42 @@ body::before {
     color: var(--accent-secondary);
 }
 
+.result-item .badge.converting {
+    background: linear-gradient(90deg, rgba(124, 93, 250, 0.3), rgba(0, 212, 170, 0.3));
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    animation: converting-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes converting-pulse {
+    0%, 100% { 
+        background: linear-gradient(90deg, rgba(124, 93, 250, 0.3), rgba(0, 212, 170, 0.3));
+    }
+    50% { 
+        background: linear-gradient(90deg, rgba(124, 93, 250, 0.5), rgba(0, 212, 170, 0.5));
+    }
+}
+
+.converting-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.result-item.converting {
+    border-color: var(--accent-primary);
+    background: rgba(124, 93, 250, 0.05);
+}
+
 /* Pagination */
 .pagination {
     display: flex;

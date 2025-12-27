@@ -1279,6 +1279,8 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         state.current_process = process
         current_step = "Initializing"
         file_percent = 0
+        start_time = asyncio.get_event_loop().time()
+        last_progress_time = start_time
         
         # Progress patterns to match dovi_convert output
         step_patterns = [
@@ -1330,8 +1332,28 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                 except:
                     pass
             
-            # Send progress update
+            # Send progress update with ETA calculation
             overall_percent = round(((file_num - 1) / total_files) * 100 + (file_percent / total_files))
+            current_time = asyncio.get_event_loop().time()
+            elapsed = current_time - start_time
+            
+            # Calculate ETA based on file progress
+            eta_str = ""
+            if file_percent > 5 and elapsed > 2:  # Need some progress to estimate
+                estimated_total = elapsed / (file_percent / 100)
+                remaining = estimated_total - elapsed
+                if remaining > 0:
+                    if remaining < 60:
+                        eta_str = f"{int(remaining)}s"
+                    elif remaining < 3600:
+                        mins = int(remaining // 60)
+                        secs = int(remaining % 60)
+                        eta_str = f"{mins}m {secs}s"
+                    else:
+                        hours = int(remaining // 3600)
+                        mins = int((remaining % 3600) // 60)
+                        eta_str = f"{hours}h {mins}m"
+            
             await broadcast_message({
                 "type": "progress",
                 "data": {
@@ -1339,9 +1361,12 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                     "total": total_files,
                     "percent": overall_percent,
                     "filename": filename,
+                    "filepath": cwd,  # Send filepath for result list matching
                     "status": "converting",
                     "step": current_step,
-                    "file_percent": file_percent
+                    "file_percent": file_percent,
+                    "eta": eta_str,
+                    "elapsed": int(elapsed)
                 }
             })
         

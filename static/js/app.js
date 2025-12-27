@@ -30,6 +30,9 @@ class DoViConvertApp {
         this.filterProfile = 'all';
         this.sortBy = 'name';
         
+        // Currently converting file (for UI status)
+        this.currentlyConverting = null;
+        
         console.log('Initializing elements...');
         this.initElements();
         console.log('Initializing event listeners...');
@@ -834,10 +837,33 @@ class DoViConvertApp {
             detail.textContent = detailText;
             label.textContent = 'Converting...';
             
+            // Add ETA and elapsed time
             if (progress.eta) {
                 detail.textContent += ` • ETA: ${progress.eta}`;
             }
+            if (progress.elapsed && progress.elapsed > 0) {
+                const elapsed = progress.elapsed;
+                let elapsedStr;
+                if (elapsed < 60) {
+                    elapsedStr = `${elapsed}s`;
+                } else if (elapsed < 3600) {
+                    elapsedStr = `${Math.floor(elapsed/60)}m ${elapsed%60}s`;
+        } else {
+                    elapsedStr = `${Math.floor(elapsed/3600)}h ${Math.floor((elapsed%3600)/60)}m`;
+                }
+                detail.textContent += ` • Elapsed: ${elapsedStr}`;
+            }
+            
+            // Track currently converting file and update results list
+            const prevConverting = this.currentlyConverting;
+            this.currentlyConverting = progress.filename;
+            if (prevConverting !== this.currentlyConverting) {
+                this.updateConvertingStatus();
+            }
         } else if (progress.status === 'complete') {
+            // Clear converting status
+            this.currentlyConverting = null;
+            this.updateConvertingStatus();
             fill.classList.remove('indeterminate');
             fill.style.width = '100%';
             fill.style.background = 'var(--accent-success, #10b981)';
@@ -850,6 +876,10 @@ class DoViConvertApp {
                 fill.style.background = '';  // Reset color
             }, 3000);
         } else if (progress.status === 'failed') {
+            // Clear converting status
+            this.currentlyConverting = null;
+            this.updateConvertingStatus();
+            
             fill.classList.remove('indeterminate');
             fill.style.width = '100%';
             fill.style.background = 'var(--accent-danger, #ef4444)';
@@ -862,6 +892,10 @@ class DoViConvertApp {
                 fill.style.background = '';  // Reset color
             }, 5000);
         } else if (progress.status === 'partial') {
+            // Clear converting status
+            this.currentlyConverting = null;
+            this.updateConvertingStatus();
+            
             fill.classList.remove('indeterminate');
             fill.style.width = '100%';
             fill.style.background = 'var(--accent-warning, #f59e0b)';
@@ -874,6 +908,36 @@ class DoViConvertApp {
                 fill.style.background = '';  // Reset color
             }, 5000);
         }
+    }
+    
+    updateConvertingStatus() {
+        // Update result items to show "Converting" status for the currently converting file
+        const list = document.getElementById('resultsList');
+        if (!list) return;
+        
+        const items = list.querySelectorAll('.result-item');
+        items.forEach(item => {
+            const badge = item.querySelector('.badge');
+            const fileName = item.querySelector('.file-name')?.textContent;
+            
+            if (!badge || !fileName) return;
+            
+            // Check if this item is currently converting
+            const isConverting = this.currentlyConverting && fileName === this.currentlyConverting;
+            
+            if (isConverting) {
+                badge.className = 'badge converting';
+                badge.innerHTML = '<span class="converting-spinner"></span> Converting';
+                item.classList.add('converting');
+            } else {
+                // Restore original badge if it was marked as converting
+                if (badge.classList.contains('converting')) {
+                    badge.className = 'badge convert';
+                    badge.textContent = 'Needs Conversion';
+                    item.classList.remove('converting');
+                }
+            }
+        });
     }
     
     displayResults(results) {
