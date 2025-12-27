@@ -213,7 +213,7 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time output streaming."""
     await websocket.accept()
     state.websocket_clients.append(websocket)
-    print(f"WebSocket connected. Total clients: {len(state.websocket_clients)}")
+    print(f"WebSocket connected. Total clients: {len(state.websocket_clients)}", flush=True)
     
     try:
         # Send initial status
@@ -223,43 +223,47 @@ async def websocket_endpoint(websocket: WebSocket):
             "settings": state.settings
         })
         
+        # Simple message loop - just receive and handle
         while True:
-            try:
-                # Wait for messages with a timeout for keepalive
-                data = await asyncio.wait_for(
-                    websocket.receive_text(),
-                    timeout=30.0
-                )
-                # Handle ping/pong for keepalive
+            message = await websocket.receive()
+            
+            # Check message type
+            if message["type"] == "websocket.disconnect":
+                break
+            elif message["type"] == "websocket.receive":
+                data = message.get("text", "")
                 if data == "ping":
                     await websocket.send_text("pong")
-            except asyncio.TimeoutError:
-                # Send a keepalive ping
-                try:
-                    await websocket.send_json({"type": "ping"})
-                except:
-                    break
+                    
     except WebSocketDisconnect:
-        pass
+        print("WebSocket client disconnected normally", flush=True)
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        print(f"WebSocket error: {type(e).__name__}: {e}", flush=True)
     finally:
         if websocket in state.websocket_clients:
             state.websocket_clients.remove(websocket)
-        print(f"WebSocket disconnected. Total clients: {len(state.websocket_clients)}")
+        print(f"WebSocket disconnected. Total clients: {len(state.websocket_clients)}", flush=True)
 
 
 async def broadcast_message(message: dict):
     """Broadcast a message to all connected WebSocket clients."""
+    if not state.websocket_clients:
+        print(f"No WebSocket clients to broadcast to. Message: {message.get('type', 'unknown')}", flush=True)
+        return
+        
+    print(f"Broadcasting to {len(state.websocket_clients)} client(s): {message.get('type', 'unknown')}", flush=True)
+    
     disconnected = []
     for client in state.websocket_clients:
         try:
             await client.send_json(message)
-        except:
+        except Exception as e:
+            print(f"Failed to send to client: {e}", flush=True)
             disconnected.append(client)
     
     for client in disconnected:
-        state.websocket_clients.remove(client)
+        if client in state.websocket_clients:
+            state.websocket_clients.remove(client)
 
 
 async def run_scan():
