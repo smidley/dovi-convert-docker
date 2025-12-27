@@ -388,7 +388,7 @@ async def run_scan():
             
             await broadcast_message({"type": "output", "data": "✅ Downloaded dovi_convert\n\n"})
         
-        # Now run the actual scan
+        # Now run the actual scan using -check command
         if mkv_files:
             await broadcast_message({
                 "type": "output", 
@@ -403,7 +403,8 @@ async def run_scan():
                 "data": f"{'─'*60}\n\n"
             })
             
-            cmd = ["dovi_convert", "-scan", str(depth)]
+            # dovi_convert uses -check to analyze files in current directory
+            cmd = ["dovi_convert", "-check"]
             await run_command(cmd, cwd=scan_path)
         
     except FileNotFoundError as e:
