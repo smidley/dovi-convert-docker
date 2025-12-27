@@ -934,7 +934,7 @@ async def run_convert(files: List[str] = None):
                 
                 await broadcast_message({"type": "output", "data": f"\n[{i}/{total}] {filename}\n"})
                 
-                cmd = ["/bin/bash", "/usr/local/bin/dovi_convert", "-y"]
+                cmd = ["/usr/local/bin/dovi_convert", "-y"]
                 if safe_mode:
                     cmd.append("-safe")
                 cmd.append(filepath)
@@ -953,7 +953,7 @@ async def run_convert(files: List[str] = None):
             # Batch conversion
             await broadcast_message({"type": "output", "data": f"🎬 Starting batch conversion in: {scan_path}\n"})
             
-            cmd = ["/bin/bash", "/usr/local/bin/dovi_convert", "-batch", str(state.settings.get("scan_depth", 5)), "-y"]
+            cmd = ["/usr/local/bin/dovi_convert", "-batch", str(state.settings.get("scan_depth", 5)), "-y"]
             if safe_mode:
                 cmd.append("-safe")
             if include_simple:
@@ -965,7 +965,7 @@ async def run_convert(files: List[str] = None):
         # Auto cleanup if enabled
         if state.settings.get("auto_cleanup", False):
             await broadcast_message({"type": "output", "data": "\n🧹 Running cleanup...\n"})
-            cleanup_cmd = ["/bin/bash", "/usr/local/bin/dovi_convert", "-cleanup", "-r"]
+            cleanup_cmd = ["/usr/local/bin/dovi_convert", "-cleanup", "-r"]
             await run_command(cleanup_cmd, cwd=scan_path)
             
     except Exception as e:
@@ -980,11 +980,15 @@ async def run_convert(files: List[str] = None):
 async def run_command(cmd: list, cwd: str = None):
     """Run a command and stream output."""
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
+        # Join command into a string and use shell execution for better compatibility
+        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        
+        process = await asyncio.create_subprocess_shell(
+            cmd_str,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            cwd=cwd
+            cwd=cwd,
+            executable="/bin/sh"
         )
         
         state.current_process = process
