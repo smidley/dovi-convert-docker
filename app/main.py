@@ -6,6 +6,7 @@ A FastAPI application providing a web UI for the dovi_convert script.
 import asyncio
 import os
 import json
+import traceback
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
@@ -211,7 +212,12 @@ async def stop_process():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time output streaming."""
-    await websocket.accept()
+    try:
+        await websocket.accept()
+    except Exception as e:
+        print(f"WebSocket accept failed: {e}", flush=True)
+        return
+        
     state.websocket_clients.append(websocket)
     print(f"WebSocket connected. Total clients: {len(state.websocket_clients)}", flush=True)
     
@@ -223,22 +229,27 @@ async def websocket_endpoint(websocket: WebSocket):
             "settings": state.settings
         })
         
-        # Simple message loop - just receive and handle
+        # Keep connection alive - just wait for disconnect
+        # We don't need to receive messages, just keep the connection open
         while True:
-            message = await websocket.receive()
-            
-            # Check message type
-            if message["type"] == "websocket.disconnect":
-                break
-            elif message["type"] == "websocket.receive":
-                data = message.get("text", "")
+            try:
+                # Use receive with a long timeout
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                # Handle ping from client
                 if data == "ping":
                     await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # Send keepalive ping to client
+                try:
+                    await websocket.send_json({"type": "keepalive"})
+                except Exception:
+                    break
                     
     except WebSocketDisconnect:
         print("WebSocket client disconnected normally", flush=True)
     except Exception as e:
         print(f"WebSocket error: {type(e).__name__}: {e}", flush=True)
+        traceback.print_exc()
     finally:
         if websocket in state.websocket_clients:
             state.websocket_clients.remove(websocket)
