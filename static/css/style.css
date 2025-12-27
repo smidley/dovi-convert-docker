@@ -1444,12 +1444,27 @@ body::before {
 
 .history-item {
     display: flex;
-    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-sm);
     padding: var(--space-sm) var(--space-md);
     background: var(--surface-1);
     border-radius: var(--radius-sm);
     margin-bottom: var(--space-xs);
     font-size: 0.8125rem;
+    border-left: 3px solid transparent;
+}
+
+.history-item.success {
+    border-left-color: var(--accent-secondary);
+}
+
+.history-item.failed {
+    border-left-color: var(--accent-danger);
+}
+
+.history-item .history-status {
+    flex-shrink: 0;
+    font-size: 0.875rem;
 }
 
 .history-item .history-file {
@@ -1462,6 +1477,7 @@ body::before {
 .history-item .history-date {
     color: var(--text-muted);
     font-size: 0.75rem;
+    flex-shrink: 0;
 }
 
 /* Backup Management */

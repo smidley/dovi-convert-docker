@@ -460,12 +460,16 @@ class DoViConvertApp {
             if (stats.history.length === 0) {
                 historyList.innerHTML = '<p class="empty-history">No conversions yet.</p>';
             } else {
-                historyList.innerHTML = stats.history.slice(0, 10).map(h => `
-                    <div class="history-item">
-                        <span class="history-file">${h.filename}</span>
+                historyList.innerHTML = stats.history.slice(0, 10).map(h => {
+                    const statusIcon = h.status === 'success' ? '✅' : '❌';
+                    const statusClass = h.status === 'success' ? 'success' : 'failed';
+                    return `
+                    <div class="history-item ${statusClass}">
+                        <span class="history-status">${statusIcon}</span>
+                        <span class="history-file" title="${h.filename}">${h.filename}</span>
                         <span class="history-date">${new Date(h.date).toLocaleDateString()}</span>
                     </div>
-                `).join('');
+                `}).join('');
             }
         }
     }
