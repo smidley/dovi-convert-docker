@@ -238,9 +238,41 @@ class DoViConvertApp {
             case 'results':
                 this.displayResults(data.data);
                 break;
+            case 'progress':
+                this.updateProgress(data.data);
+                break;
             case 'keepalive':
                 // Ignore keepalive messages
                 break;
+        }
+    }
+    
+    updateProgress(progress) {
+        const container = document.getElementById('progressContainer');
+        const fill = document.getElementById('progressFill');
+        const stats = document.getElementById('progressStats');
+        const detail = document.getElementById('progressDetail');
+        const label = document.getElementById('progressLabel');
+        
+        if (!container) return;
+        
+        if (progress.status === 'scanning') {
+            container.style.display = 'block';
+            fill.style.width = `${progress.percent}%`;
+            stats.textContent = `${progress.current} / ${progress.total}`;
+            detail.textContent = progress.filename || '';
+            label.textContent = 'Scanning files...';
+        } else if (progress.status === 'cancelled') {
+            label.textContent = 'Cancelled';
+            setTimeout(() => {
+                container.style.display = 'none';
+            }, 2000);
+        } else if (progress.status === 'complete') {
+            fill.style.width = '100%';
+            label.textContent = 'Complete!';
+            setTimeout(() => {
+                container.style.display = 'none';
+            }, 2000);
         }
     }
     
@@ -353,6 +385,18 @@ class DoViConvertApp {
             this.scanBtn.disabled = false;
             this.convertBtn.disabled = false;
             this.stopBtn.disabled = true;
+            
+            // Hide progress bar when done
+            const container = document.getElementById('progressContainer');
+            if (container) {
+                const fill = document.getElementById('progressFill');
+                const label = document.getElementById('progressLabel');
+                if (fill) fill.style.width = '100%';
+                if (label) label.textContent = 'Complete!';
+                setTimeout(() => {
+                    container.style.display = 'none';
+                }, 1500);
+            }
         }
     }
 

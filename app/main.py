@@ -361,15 +361,31 @@ async def run_scan():
                         "type": "output", 
                         "data": "\n⚠️ Scan cancelled by user\n"
                     })
+                    await broadcast_message({
+                        "type": "progress",
+                        "data": {"current": i, "total": len(mkv_files), "status": "cancelled"}
+                    })
                     break
                 
                 filename = Path(filepath).name
                 
-                # Show progress every 10 files or for small counts
-                if i % 50 == 0 or i <= 5 or len(mkv_files) < 100:
+                # Send progress update
+                await broadcast_message({
+                    "type": "progress",
+                    "data": {
+                        "current": i,
+                        "total": len(mkv_files),
+                        "percent": round((i / len(mkv_files)) * 100),
+                        "filename": filename,
+                        "status": "scanning"
+                    }
+                })
+                
+                # Show in log every 100 files or for small counts
+                if i % 100 == 0 or i <= 3 or len(mkv_files) < 50:
                     await broadcast_message({
                         "type": "output", 
-                        "data": f"[{i}/{len(mkv_files)}] Checking: {filename[:50]}...\n"
+                        "data": f"[{i}/{len(mkv_files)}] {filename[:50]}...\n"
                     })
                 
                 try:
