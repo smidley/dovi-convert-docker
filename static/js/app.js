@@ -734,13 +734,39 @@ class DoViConvertApp {
         } else if (progress.status === 'complete') {
             fill.classList.remove('indeterminate');
             fill.style.width = '100%';
+            fill.style.background = 'var(--accent-success, #10b981)';
             if (percent) percent.textContent = '100%';
             label.textContent = 'Complete!';
             detail.textContent = '✓ Finished successfully';
             setTimeout(() => { 
                 container.style.display = 'none';
                 fill.classList.remove('indeterminate');
+                fill.style.background = '';  // Reset color
             }, 3000);
+        } else if (progress.status === 'failed') {
+            fill.classList.remove('indeterminate');
+            fill.style.width = '100%';
+            fill.style.background = 'var(--accent-danger, #ef4444)';
+            if (percent) percent.textContent = '✗';
+            label.textContent = 'Failed!';
+            detail.textContent = '❌ Conversion failed';
+            setTimeout(() => { 
+                container.style.display = 'none';
+                fill.classList.remove('indeterminate');
+                fill.style.background = '';  // Reset color
+            }, 5000);
+        } else if (progress.status === 'partial') {
+            fill.classList.remove('indeterminate');
+            fill.style.width = '100%';
+            fill.style.background = 'var(--accent-warning, #f59e0b)';
+            if (percent) percent.textContent = '!';
+            label.textContent = 'Partial Success';
+            detail.textContent = '⚠️ Some conversions failed';
+            setTimeout(() => { 
+                container.style.display = 'none';
+                fill.classList.remove('indeterminate');
+                fill.style.background = '';  // Reset color
+            }, 5000);
         }
     }
     

@@ -996,6 +996,7 @@ async def run_convert(files: List[str] = None):
     include_simple = state.settings.get("include_simple_fel", False)
     
     conversion_results = []  # Track success/failure for each file
+    final_status = "complete"  # Track overall status for progress bar
     
     try:
         if files:
@@ -1097,6 +1098,12 @@ async def run_convert(files: List[str] = None):
                 "type": "conversion_complete", 
                 "data": {"successful": successful, "failed": failed, "results": conversion_results}
             })
+            
+            # Set final status based on results
+            if failed > 0 and successful == 0:
+                final_status = "failed"
+            elif failed > 0:
+                final_status = "partial"  # Some succeeded, some failed
         else:
             # Batch conversion
             await broadcast_message({"type": "output", "data": f"🎬 Starting batch conversion in: {scan_path}\n"})
@@ -1118,11 +1125,12 @@ async def run_convert(files: List[str] = None):
             
     except Exception as e:
         await broadcast_message({"type": "output", "data": f"\n❌ Error: {str(e)}\n"})
+        final_status = "failed"
     finally:
         state.is_running = False
         state.current_action = None
         await broadcast_message({"type": "status", "running": False})
-        await broadcast_message({"type": "progress", "data": {"status": "complete"}})
+        await broadcast_message({"type": "progress", "data": {"status": final_status}})
 
 
 async def run_command(cmd: list, cwd: str = None):
