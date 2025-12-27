@@ -1227,13 +1227,27 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         # Percentage pattern
         percent_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*%')
         
+        output_lines = []
+        saw_error = False
+        saw_success = False
+        
         while True:
             line = await process.stdout.readline()
             if not line:
                 break
             
             text = line.decode('utf-8', errors='replace')
+            output_lines.append(text)
             await broadcast_message({"type": "output", "data": text})
+            
+            # Check for error indicators in output
+            if re.search(r'Unknown command|Error:|ERROR|FAILED|failed|No such file|not found', text, re.IGNORECASE):
+                if not re.search(r'Command not found', text):  # Ignore our own messages
+                    saw_error = True
+            
+            # Check for success indicators
+            if re.search(r'successfully|completed|done|finished|✓|SUCCESS', text, re.IGNORECASE):
+                saw_success = True
             
             # Parse step from output
             for pattern, step_name in step_patterns:
@@ -1266,8 +1280,12 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         
         await process.wait()
         
-        # Final progress for this file
-        if process.returncode == 0:
+        # Check if output looks like just usage info (script didn't actually run)
+        output_text = ''.join(output_lines)
+        is_just_usage = 'Usage:' in output_text and 'dovi_convert -' in output_text and not saw_success
+        
+        # Determine success based on exit code AND output content
+        if process.returncode == 0 and not saw_error and not is_just_usage:
             await broadcast_message({
                 "type": "progress",
                 "data": {
@@ -1282,6 +1300,10 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             })
             return True
         else:
+            if is_just_usage:
+                await broadcast_message({"type": "output", "data": "\n⚠️ dovi_convert showed usage info but didn't convert - check command format\n"})
+            elif saw_error:
+                await broadcast_message({"type": "output", "data": "\n⚠️ Errors detected in output\n"})
             return False
             
     except Exception as e:

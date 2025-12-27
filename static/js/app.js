@@ -1313,33 +1313,53 @@ class DoViConvertApp {
     }
     
     scrollToLog(logId) {
+        console.log('scrollToLog called with logId:', logId);
+        
+        if (!logId) {
+            this.showPopup('No log ID available for this history entry', 'warning');
+            return;
+        }
+        
         // Switch to log tab first
         this.switchTab('output');
         
-        // Find the marker
-        const marker = document.getElementById(`log-${logId}`);
-        if (marker) {
-            // Highlight the marker briefly
-            marker.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // Small delay to ensure tab switch completes
+        setTimeout(() => {
+            // Find the marker
+            const marker = document.getElementById(`log-${logId}`);
+            console.log('Looking for marker:', `log-${logId}`, 'Found:', !!marker);
             
-            // Find the next sibling elements and highlight them
-            let el = marker.nextElementSibling;
-            const toHighlight = [];
-            let count = 0;
-            while (el && count < 10) {
-                toHighlight.push(el);
-                el = el.nextElementSibling;
-                count++;
+            if (marker) {
+                // Scroll to marker
+                marker.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                
+                // Find the next sibling elements and highlight them
+                let el = marker.nextElementSibling;
+                const toHighlight = [];
+                let count = 0;
+                while (el && count < 15) {
+                    toHighlight.push(el);
+                    el = el.nextElementSibling;
+                    count++;
+                }
+                
+                // Add highlight animation
+                toHighlight.forEach(span => {
+                    span.classList.add('log-highlight');
+                    setTimeout(() => span.classList.remove('log-highlight'), 3000);
+                });
+                
+                this.showPopup('Jumped to log entry', 'success');
+            } else {
+                // Try to find by searching log history
+                const historyEntry = this.logHistory.find(h => h.logId === logId);
+                if (historyEntry) {
+                    this.showPopup('Log marker found in history but not in DOM - try scrolling through the log', 'warning');
+                } else {
+                    this.showPopup('Log entry not found - it may have been cleared or from a previous session', 'warning');
+                }
             }
-            
-            // Add highlight animation
-            toHighlight.forEach(span => {
-                span.classList.add('log-highlight');
-                setTimeout(() => span.classList.remove('log-highlight'), 2000);
-            });
-        } else {
-            this.showPopup('Log entry not found - it may have been cleared', 'warning');
-        }
+        }, 100);
     }
     
     clearTerminal() {
