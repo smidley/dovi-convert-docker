@@ -403,9 +403,66 @@ async def run_scan():
                 "data": f"{'─'*60}\n\n"
             })
             
-            # dovi_convert uses -check to analyze files in current directory
-            cmd = ["dovi_convert", "-check"]
-            await run_command(cmd, cwd=scan_path)
+            # Get unique directories containing MKV files
+            directories = set()
+            for f in mkv_files:
+                directories.add(str(Path(f).parent))
+            
+            await broadcast_message({
+                "type": "output", 
+                "data": f"📂 Checking {len(directories)} directories...\n\n"
+            })
+            
+            dv_files_found = []
+            
+            for i, directory in enumerate(sorted(directories), 1):
+                dir_name = Path(directory).name
+                await broadcast_message({
+                    "type": "output", 
+                    "data": f"[{i}/{len(directories)}] {dir_name}...\n"
+                })
+                
+                # Run dovi_convert -check in each directory
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        "dovi_convert", "-check",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,
+                        cwd=directory
+                    )
+                    
+                    stdout, _ = await process.communicate()
+                    output = stdout.decode('utf-8', errors='replace')
+                    
+                    # Check if any DV Profile 7 files found (look for "Profile 7" in output)
+                    if "Profile 7" in output or "DV7" in output:
+                        # Show the output for this directory
+                        await broadcast_message({
+                            "type": "output", 
+                            "data": f"\n🎯 Found DV files in: {dir_name}\n"
+                        })
+                        for line in output.split('\n'):
+                            if line.strip() and ("Profile 7" in line or "DV7" in line or "---" in line or "Filename" in line):
+                                await broadcast_message({
+                                    "type": "output", 
+                                    "data": f"   {line}\n"
+                                })
+                        dv_files_found.append(directory)
+                        
+                except Exception as e:
+                    await broadcast_message({
+                        "type": "output", 
+                        "data": f"   ⚠️ Error: {str(e)}\n"
+                    })
+            
+            await broadcast_message({
+                "type": "output", 
+                "data": f"\n{'─'*60}\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": f"📊 Summary: Found {len(dv_files_found)} directories with DV Profile 7 files\n"
+            })
         
     except FileNotFoundError as e:
         await broadcast_message({"type": "output", "data": f"\n❌ Command not found: {str(e)}\n"})
