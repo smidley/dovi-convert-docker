@@ -1010,6 +1010,30 @@ async def run_convert(files: List[str] = None):
                 
                 filename = Path(filepath).name
                 
+                # Check if file exists, try to remap path if not
+                actual_filepath = filepath
+                if not Path(filepath).exists():
+                    # Try to find the file by searching in scan_path
+                    await broadcast_message({"type": "output", "data": f"⚠️ File not found at: {filepath}\n"})
+                    await broadcast_message({"type": "output", "data": f"🔍 Searching in {scan_path}...\n"})
+                    
+                    # Search for the file by name
+                    found_path = None
+                    for root, dirs, files_in_dir in os.walk(scan_path):
+                        if filename in files_in_dir:
+                            found_path = os.path.join(root, filename)
+                            break
+                    
+                    if found_path and Path(found_path).exists():
+                        actual_filepath = found_path
+                        await broadcast_message({"type": "output", "data": f"✅ Found at: {actual_filepath}\n"})
+                    else:
+                        await broadcast_message({"type": "output", "data": f"❌ Could not locate file: {filename}\n"})
+                        await broadcast_message({"type": "output", "data": f"💡 Make sure your media is mounted at: {scan_path}\n"})
+                        conversion_results.append({"file": filename, "status": "failed"})
+                        state.add_to_history(filename, "failed")
+                        continue
+                
                 # Send initial progress
                 await broadcast_message({
                     "type": "progress",
@@ -1026,15 +1050,16 @@ async def run_convert(files: List[str] = None):
                 
                 await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
                 await broadcast_message({"type": "output", "data": f"[{i}/{total}] {filename}\n"})
+                await broadcast_message({"type": "output", "data": f"📁 Path: {actual_filepath}\n"})
                 await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
                 
                 cmd = ["/usr/local/bin/dovi_convert", "-y"]
                 if safe_mode:
                     cmd.append("-safe")
-                cmd.append(filepath)
+                cmd.append(actual_filepath)
                 
                 # Run command and track result
-                success = await run_convert_command(cmd, cwd=str(Path(filepath).parent), 
+                success = await run_convert_command(cmd, cwd=str(Path(actual_filepath).parent), 
                                                     file_num=i, total_files=total, filename=filename)
                 
                 if success:
@@ -1042,14 +1067,16 @@ async def run_convert(files: List[str] = None):
                     state.add_to_history(filename, "success")
                     await broadcast_message({"type": "output", "data": f"\n✅ {filename} - CONVERTED SUCCESSFULLY\n"})
                     
-                    # Update cache - file was converted
+                    # Update cache - file was converted (update both original and actual path)
                     if filepath in state.scan_cache.get("files", {}):
                         state.scan_cache["files"][filepath]["profile"] = "profile8"
-                        state.save_scan_cache()
+                    if actual_filepath != filepath and actual_filepath in state.scan_cache.get("files", {}):
+                        state.scan_cache["files"][actual_filepath]["profile"] = "profile8"
+                    state.save_scan_cache()
                     
                     # Refresh Jellyfin metadata if Jellyfin integration is enabled
                     if state.settings.get("use_jellyfin"):
-                        await refresh_jellyfin_item(filepath)
+                        await refresh_jellyfin_item(actual_filepath)
                 else:
                     conversion_results.append({"file": filename, "status": "failed"})
                     state.add_to_history(filename, "failed")
