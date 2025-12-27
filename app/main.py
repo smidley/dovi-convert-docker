@@ -51,6 +51,8 @@ class AppState:
             "safe_mode": False,
             "include_simple_fel": False,
             "scan_depth": 5,
+            "include_movies": True,
+            "include_tv_shows": True,
             "jellyfin_url": "",
             "jellyfin_api_key": "",
             "use_jellyfin": False
@@ -71,6 +73,8 @@ class SettingsUpdate(BaseModel):
     safe_mode: Optional[bool] = None
     include_simple_fel: Optional[bool] = None
     scan_depth: Optional[int] = None
+    include_movies: Optional[bool] = None
+    include_tv_shows: Optional[bool] = None
     jellyfin_url: Optional[str] = None
     jellyfin_api_key: Optional[str] = None
     use_jellyfin: Optional[bool] = None
@@ -164,6 +168,12 @@ async def update_settings(settings: SettingsUpdate):
     
     if settings.scan_depth is not None:
         state.settings["scan_depth"] = max(1, min(10, settings.scan_depth))
+    
+    if settings.include_movies is not None:
+        state.settings["include_movies"] = settings.include_movies
+    
+    if settings.include_tv_shows is not None:
+        state.settings["include_tv_shows"] = settings.include_tv_shows
     
     if settings.jellyfin_url is not None:
         state.settings["jellyfin_url"] = settings.jellyfin_url.rstrip('/')
@@ -382,11 +392,32 @@ async def run_jellyfin_scan():
         async with aiohttp.ClientSession() as session:
             headers = {"X-Emby-Token": api_key}
             
-            # Get all movies with video info
-            await broadcast_message({"type": "output", "data": "📡 Fetching library items from Jellyfin...\n"})
+            # Build item types filter based on settings
+            include_movies = state.settings.get("include_movies", True)
+            include_tv = state.settings.get("include_tv_shows", True)
+            
+            item_types = []
+            if include_movies:
+                item_types.append("Movie")
+            if include_tv:
+                item_types.append("Episode")
+            
+            if not item_types:
+                await broadcast_message({
+                    "type": "output",
+                    "data": "❌ No content types selected. Enable Movies or TV Shows in settings.\n"
+                })
+                state.is_running = False
+                await broadcast_message({"type": "status", "running": False})
+                return
+            
+            type_str = ",".join(item_types)
+            type_display = " and ".join(["Movies" if t == "Movie" else "TV Shows" for t in item_types])
+            
+            await broadcast_message({"type": "output", "data": f"📡 Fetching {type_display} from Jellyfin...\n"})
             
             params = {
-                "IncludeItemTypes": "Movie,Episode",
+                "IncludeItemTypes": type_str,
                 "Recursive": "true",
                 "Fields": "MediaStreams,Path",
                 "Limit": "10000"
@@ -626,7 +657,24 @@ async def run_scan():
     })
     await broadcast_message({
         "type": "output", 
-        "data": f"📊 Scan depth: {depth} levels\n\n"
+        "data": f"📊 Scan depth: {depth} levels\n"
+    })
+    
+    # Show content type info
+    include_movies = state.settings.get("include_movies", True)
+    include_tv = state.settings.get("include_tv_shows", True)
+    content_types = []
+    if include_movies:
+        content_types.append("Movies")
+    if include_tv:
+        content_types.append("TV Shows")
+    await broadcast_message({
+        "type": "output", 
+        "data": f"📺 Content types: {', '.join(content_types) if content_types else 'None'}\n"
+    })
+    await broadcast_message({
+        "type": "output", 
+        "data": f"   (File system scan includes all media files)\n\n"
     })
     
     try:

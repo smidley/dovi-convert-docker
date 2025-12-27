@@ -53,6 +53,8 @@ class DoViConvertApp {
         this.safeModeCheckbox = getEl('safeMode');
         this.includeSimpleCheckbox = getEl('includeSimple');
         this.autoCleanupCheckbox = getEl('autoCleanup');
+        this.includeMoviesCheckbox = getEl('includeMovies');
+        this.includeTvShowsCheckbox = getEl('includeTvShows');
         
         // Jellyfin
         this.useJellyfinCheckbox = getEl('useJellyfin');
@@ -103,6 +105,8 @@ class DoViConvertApp {
         addListener(this.safeModeCheckbox, 'change', () => this.saveSettings());
         addListener(this.includeSimpleCheckbox, 'change', () => this.saveSettings());
         addListener(this.autoCleanupCheckbox, 'change', () => this.saveSettings());
+        addListener(this.includeMoviesCheckbox, 'change', () => this.saveSettings());
+        addListener(this.includeTvShowsCheckbox, 'change', () => this.saveSettings());
         
         // Jellyfin settings
         addListener(this.useJellyfinCheckbox, 'change', () => {
@@ -622,6 +626,12 @@ class DoViConvertApp {
         if (settings.auto_cleanup !== undefined) {
             this.autoCleanupCheckbox.checked = settings.auto_cleanup;
         }
+        if (settings.include_movies !== undefined && this.includeMoviesCheckbox) {
+            this.includeMoviesCheckbox.checked = settings.include_movies;
+        }
+        if (settings.include_tv_shows !== undefined && this.includeTvShowsCheckbox) {
+            this.includeTvShowsCheckbox.checked = settings.include_tv_shows;
+        }
         
         // Jellyfin settings
         if (settings.use_jellyfin !== undefined && this.useJellyfinCheckbox) {
@@ -645,6 +655,8 @@ class DoViConvertApp {
             safe_mode: this.safeModeCheckbox.checked,
             include_simple_fel: this.includeSimpleCheckbox.checked,
             auto_cleanup: this.autoCleanupCheckbox.checked,
+            include_movies: this.includeMoviesCheckbox?.checked ?? true,
+            include_tv_shows: this.includeTvShowsCheckbox?.checked ?? true,
             use_jellyfin: this.useJellyfinCheckbox?.checked || false,
             jellyfin_url: this.jellyfinUrlInput?.value || '',
             jellyfin_api_key: this.jellyfinApiKeyInput?.value || ''
