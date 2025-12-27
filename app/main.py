@@ -500,6 +500,78 @@ async def broadcast_message(message: dict):
             state.websocket_clients.remove(client)
 
 
+async def refresh_jellyfin_item(filepath: str):
+    """Refresh Jellyfin metadata for a converted file."""
+    url = state.settings.get("jellyfin_url", "")
+    api_key = state.settings.get("jellyfin_api_key", "")
+    
+    if not url or not api_key:
+        return
+    
+    try:
+        await broadcast_message({"type": "output", "data": f"🔄 Refreshing Jellyfin metadata...\n"})
+        
+        filename = Path(filepath).name
+        headers = {"X-Emby-Token": api_key}
+        
+        async with aiohttp.ClientSession() as session:
+            # Search for the item by filename
+            search_url = f"{url}/Items"
+            params = {
+                "searchTerm": Path(filepath).stem,  # Search by name without extension
+                "IncludeItemTypes": "Movie,Episode",
+                "Recursive": "true",
+                "Fields": "Path",
+                "Limit": "50"
+            }
+            
+            async with session.get(search_url, headers=headers, params=params) as response:
+                if response.status != 200:
+                    await broadcast_message({"type": "output", "data": f"⚠️ Could not search Jellyfin: {response.status}\n"})
+                    return
+                
+                data = await response.json()
+                items = data.get("Items", [])
+                
+                # Find the matching item by path
+                item_id = None
+                for item in items:
+                    item_path = item.get("Path", "")
+                    # Check if paths match (handle different mount points)
+                    if item_path and (filepath in item_path or Path(filepath).name in item_path):
+                        item_id = item.get("Id")
+                        break
+                
+                if not item_id:
+                    # Try direct path search
+                    for item in items:
+                        if item.get("Name", "").lower() in filename.lower() or filename.lower() in item.get("Name", "").lower():
+                            item_id = item.get("Id")
+                            break
+                
+                if item_id:
+                    # Trigger metadata refresh for the item
+                    refresh_url = f"{url}/Items/{item_id}/Refresh"
+                    refresh_params = {
+                        "Recursive": "false",
+                        "MetadataRefreshMode": "FullRefresh",
+                        "ImageRefreshMode": "None",
+                        "ReplaceAllMetadata": "false",
+                        "ReplaceAllImages": "false"
+                    }
+                    
+                    async with session.post(refresh_url, headers=headers, params=refresh_params) as refresh_response:
+                        if refresh_response.status in (200, 204):
+                            await broadcast_message({"type": "output", "data": f"✅ Jellyfin metadata refresh triggered\n"})
+                        else:
+                            await broadcast_message({"type": "output", "data": f"⚠️ Jellyfin refresh returned: {refresh_response.status}\n"})
+                else:
+                    await broadcast_message({"type": "output", "data": f"⚠️ Could not find item in Jellyfin for refresh\n"})
+                    
+    except Exception as e:
+        await broadcast_message({"type": "output", "data": f"⚠️ Jellyfin refresh error: {str(e)}\n"})
+
+
 async def run_jellyfin_scan():
     """Scan Jellyfin library for Dolby Vision files."""
     state.is_running = True
@@ -974,6 +1046,10 @@ async def run_convert(files: List[str] = None):
                     if filepath in state.scan_cache.get("files", {}):
                         state.scan_cache["files"][filepath]["profile"] = "profile8"
                         state.save_scan_cache()
+                    
+                    # Refresh Jellyfin metadata if Jellyfin integration is enabled
+                    if state.settings.get("use_jellyfin"):
+                        await refresh_jellyfin_item(filepath)
                 else:
                     conversion_results.append({"file": filename, "status": "failed"})
                     state.add_to_history(filename, "failed")
