@@ -12,6 +12,8 @@ class DoViConvertApp {
         this.reconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.keepaliveInterval = null;
+        this.logHistory = [];
+        this.maxLogLines = 1000;
         
         console.log('Initializing elements...');
         this.initElements();
@@ -21,6 +23,10 @@ class DoViConvertApp {
         this.connectWebSocket();
         console.log('Loading settings...');
         this.loadSettings();
+        console.log('Restoring state...');
+        this.restoreState();
+        console.log('Checking server status...');
+        this.checkServerStatus();
         console.log('Constructor complete');
     }
 
@@ -289,6 +295,7 @@ class DoViConvertApp {
         const stats = document.getElementById('progressStats');
         const detail = document.getElementById('progressDetail');
         const label = document.getElementById('progressLabel');
+        const percent = document.getElementById('progressPercent');
         
         if (!container) return;
         
@@ -296,19 +303,24 @@ class DoViConvertApp {
             container.style.display = 'block';
             fill.style.width = `${progress.percent}%`;
             stats.textContent = `${progress.current} / ${progress.total}`;
-            detail.textContent = progress.filename || '';
+            if (percent) percent.textContent = `${progress.percent}%`;
+            detail.textContent = progress.filename ? `📄 ${progress.filename}` : 'Processing...';
             label.textContent = 'Scanning files...';
         } else if (progress.status === 'cancelled') {
             label.textContent = 'Cancelled';
+            if (percent) percent.textContent = '—';
+            detail.textContent = 'Scan was cancelled';
             setTimeout(() => {
                 container.style.display = 'none';
-            }, 2000);
+            }, 3000);
         } else if (progress.status === 'complete') {
             fill.style.width = '100%';
+            if (percent) percent.textContent = '100%';
             label.textContent = 'Complete!';
+            detail.textContent = '✓ Scan finished successfully';
             setTimeout(() => {
                 container.style.display = 'none';
-            }, 2000);
+            }, 3000);
         }
     }
     
@@ -443,6 +455,56 @@ class DoViConvertApp {
             this.applySettings(settings);
         } catch (error) {
             console.error('Failed to load settings:', error);
+        }
+    }
+    
+    // State persistence methods
+    saveState() {
+        try {
+            const state = {
+                logHistory: this.logHistory.slice(-this.maxLogLines),
+                timestamp: Date.now()
+            };
+            sessionStorage.setItem('doviConvertState', JSON.stringify(state));
+        } catch (e) {
+            console.warn('Failed to save state:', e);
+        }
+    }
+    
+    restoreState() {
+        try {
+            const saved = sessionStorage.getItem('doviConvertState');
+            if (saved) {
+                const state = JSON.parse(saved);
+                // Only restore if less than 1 hour old
+                if (Date.now() - state.timestamp < 3600000) {
+                    this.logHistory = state.logHistory || [];
+                    // Restore log to terminal
+                    if (this.logHistory.length > 0 && this.terminalContent) {
+                        this.terminalContent.innerHTML = '';
+                        this.logHistory.forEach(entry => {
+                            this.appendToTerminalDirect(entry.text, entry.type);
+                        });
+                        this.appendToTerminal('── Session restored ──\n', 'system');
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to restore state:', e);
+        }
+    }
+    
+    async checkServerStatus() {
+        try {
+            const response = await fetch('/api/status');
+            const status = await response.json();
+            
+            if (status.is_running) {
+                this.updateStatus(true, status.action || 'scan');
+                this.appendToTerminal('🔄 Process still running on server...\n', 'system');
+            }
+        } catch (error) {
+            console.error('Failed to check server status:', error);
         }
     }
     
@@ -594,6 +656,20 @@ class DoViConvertApp {
     }
 
     appendToTerminal(text, type = 'normal') {
+        // Save to history
+        this.logHistory.push({ text, type, time: Date.now() });
+        if (this.logHistory.length > this.maxLogLines) {
+            this.logHistory.shift();
+        }
+        this.saveState();
+        
+        // Render to terminal
+        this.appendToTerminalDirect(text, type);
+    }
+    
+    appendToTerminalDirect(text, type = 'normal') {
+        if (!this.terminalContent) return;
+        
         // Remove welcome message on first real output
         const welcomeMsg = this.terminalContent.querySelector('.welcome-msg');
         if (welcomeMsg) {
@@ -627,7 +703,11 @@ class DoViConvertApp {
     }
 
     clearTerminal() {
-        this.terminalContent.innerHTML = '';
+        if (this.terminalContent) {
+            this.terminalContent.innerHTML = '';
+        }
+        this.logHistory = [];
+        this.saveState();
     }
 
     async openBrowser() {

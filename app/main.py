@@ -95,6 +95,16 @@ async def get_status():
     }
 
 
+@app.get("/api/status")
+async def get_status():
+    """Get current running status for page refresh recovery."""
+    return {
+        "is_running": state.is_running,
+        "action": "scan" if state.is_running else None,
+        "websocket_clients": len(state.websocket_clients)
+    }
+
+
 @app.get("/api/debug")
 async def debug_info():
     """Debug endpoint to check system status."""

@@ -137,12 +137,15 @@
                 <div class="progress-container" id="progressContainer" style="display: none;">
                     <div class="progress-header">
                         <span class="progress-label" id="progressLabel">Scanning...</span>
-                        <span class="progress-stats" id="progressStats">0 / 0</span>
+                        <div style="display: flex; align-items: center; gap: var(--space-md);">
+                            <span class="progress-percent" id="progressPercent">0%</span>
+                            <span class="progress-stats" id="progressStats">0 / 0</span>
+                        </div>
                     </div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="progressFill" style="width: 0%"></div>
                     </div>
-                    <div class="progress-detail" id="progressDetail"></div>
+                    <div class="progress-detail" id="progressDetail">Waiting to start...</div>
                 </div>
             </section>
 
