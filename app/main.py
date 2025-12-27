@@ -7,6 +7,7 @@ import asyncio
 import os
 import json
 import traceback
+import shlex
 import aiohttp
 from pathlib import Path
 from datetime import datetime
@@ -1150,8 +1151,8 @@ async def run_command(cmd: list, cwd: str = None):
             await broadcast_message({"type": "output", "data": "   docker pull smidley/dovi-convert:latest\n"})
             return
         
-        # Join command into a string for shell execution
-        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        # Join command into a string for shell execution with proper escaping
+        cmd_str = " ".join(shlex.quote(c) for c in cmd)
         
         await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n"})
         
@@ -1197,8 +1198,8 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             await broadcast_message({"type": "output", "data": f"❌ Script not found: {main_cmd}\n"})
             return False
         
-        # Join command into a string for shell execution
-        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        # Join command into a string for shell execution with proper escaping
+        cmd_str = " ".join(shlex.quote(c) for c in cmd)
         
         await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n\n"})
         
