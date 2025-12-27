@@ -522,13 +522,18 @@ async def broadcast_message(message: dict):
 
 async def refresh_jellyfin_item(filepath: str):
     """Refresh Jellyfin metadata for a converted file."""
+    logger.info(f"Attempting Jellyfin refresh for: {filepath}")
+    
     url = state.settings.get("jellyfin_url", "")
     api_key = state.settings.get("jellyfin_api_key", "")
     
     if not url or not api_key:
+        logger.warning("Jellyfin refresh skipped - URL or API key not configured")
+        await broadcast_message({"type": "output", "data": f"⚠️ Jellyfin refresh skipped - URL or API key not configured\n"})
         return
     
     try:
+        logger.info(f"Jellyfin refresh starting - URL: {url}")
         await broadcast_message({"type": "output", "data": f"🔄 Refreshing Jellyfin metadata...\n"})
         
         filename = Path(filepath).name
@@ -570,6 +575,7 @@ async def refresh_jellyfin_item(filepath: str):
                             break
                 
                 if item_id:
+                    logger.info(f"Found Jellyfin item ID: {item_id}")
                     # Trigger metadata refresh for the item
                     refresh_url = f"{url}/Items/{item_id}/Refresh"
                     refresh_params = {
@@ -582,13 +588,18 @@ async def refresh_jellyfin_item(filepath: str):
                     
                     async with session.post(refresh_url, headers=headers, params=refresh_params) as refresh_response:
                         if refresh_response.status in (200, 204):
+                            logger.info(f"Jellyfin metadata refresh triggered successfully")
                             await broadcast_message({"type": "output", "data": f"✅ Jellyfin metadata refresh triggered\n"})
                         else:
+                            logger.warning(f"Jellyfin refresh returned status: {refresh_response.status}")
                             await broadcast_message({"type": "output", "data": f"⚠️ Jellyfin refresh returned: {refresh_response.status}\n"})
                 else:
+                    logger.warning(f"Could not find item in Jellyfin - searched {len(items)} items")
                     await broadcast_message({"type": "output", "data": f"⚠️ Could not find item in Jellyfin for refresh\n"})
+                    await broadcast_message({"type": "output", "data": f"💡 Try running a library scan in Jellyfin to update media info\n"})
                     
     except Exception as e:
+        logger.error(f"Jellyfin refresh error: {type(e).__name__}: {str(e)}")
         await broadcast_message({"type": "output", "data": f"⚠️ Jellyfin refresh error: {str(e)}\n"})
 
 
@@ -1117,7 +1128,10 @@ async def run_convert(files: List[str] = None):
                         
                         # Refresh Jellyfin metadata if Jellyfin integration is enabled
                         if state.settings.get("use_jellyfin"):
+                            logger.info("Jellyfin integration enabled - triggering refresh")
                             await refresh_jellyfin_item(actual_filepath)
+                        else:
+                            logger.info("Jellyfin integration not enabled - skipping refresh")
                     else:
                         # Command reported success but no backup = didn't actually convert
                         logger.warning(f"No backup file found at {backup_path} - conversion may not have occurred")
