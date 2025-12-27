@@ -110,20 +110,24 @@ class DoViConvertApp {
     }
     
     initTooltips() {
-        const tooltips = document.querySelectorAll('.tooltip');
-        tooltips.forEach(tooltip => {
-            tooltip.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const text = tooltip.getAttribute('title');
-                this.showTooltipPopup(tooltip, text);
+        try {
+            const tooltips = document.querySelectorAll('.tooltip');
+            tooltips.forEach(tooltip => {
+                tooltip.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const text = tooltip.getAttribute('title');
+                    this.showTooltipPopup(tooltip, text);
+                });
             });
-        });
-        
-        // Close tooltip when clicking elsewhere
-        document.addEventListener('click', () => {
-            const existing = document.querySelector('.tooltip-popup');
-            if (existing) existing.remove();
-        });
+            
+            // Close tooltip when clicking elsewhere
+            document.addEventListener('click', () => {
+                const existing = document.querySelector('.tooltip-popup');
+                if (existing) existing.remove();
+            });
+        } catch (e) {
+            console.error('Error initializing tooltips:', e);
+        }
     }
     
     showTooltipPopup(element, text) {
@@ -143,56 +147,70 @@ class DoViConvertApp {
         // Auto-hide after 3 seconds
         setTimeout(() => popup.remove(), 3000);
     }
-
+    
     connectWebSocket() {
+        try {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
-        
-        console.log('Connecting to WebSocket:', wsUrl);
-        this.appendToTerminal(`🔌 Connecting to ${wsUrl}...\n`, 'system');
+            
+            console.log('Connecting to WebSocket:', wsUrl);
+            
+            // Only append to terminal if it exists
+            if (this.terminalContent) {
+                this.appendToTerminal(`🔌 Connecting to ${wsUrl}...\n`, 'system');
+            }
         
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
-            console.log('WebSocket connected');
-            this.reconnectAttempts = 0;
-            this.appendToTerminal('🔗 Connected to server\n', 'system');
-            
-            // Start keepalive ping every 20 seconds
-            this.startKeepalive();
+                console.log('WebSocket connected successfully');
+                this.reconnectAttempts = 0;
+                if (this.terminalContent) {
+                    this.appendToTerminal('🔗 Connected to server\n', 'system');
+                }
+                
+                // Start keepalive ping every 20 seconds
+                this.startKeepalive();
         };
         
         this.ws.onmessage = (event) => {
-            console.log('WebSocket message:', event.data);
-            try {
-                const data = JSON.parse(event.data);
-                // Ignore ping messages
-                if (data.type === 'ping') {
-                    this.ws.send('ping');
-                    return;
+                try {
+            const data = JSON.parse(event.data);
+                    // Ignore ping messages
+                    if (data.type === 'ping' || data.type === 'keepalive') {
+                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                            this.ws.send('ping');
+                        }
+                        return;
+                    }
+            this.handleMessage(data);
+                } catch (e) {
+                    // Handle non-JSON messages (like "pong")
+                    if (event.data === 'pong') {
+                        return;
+                    }
+                    console.error('Failed to parse WebSocket message:', e);
                 }
-                this.handleMessage(data);
-            } catch (e) {
-                // Handle non-JSON messages (like "pong")
-                if (event.data === 'pong') {
-                    console.log('Keepalive pong received');
-                    return;
+            };
+            
+            this.ws.onclose = (event) => {
+                console.log('WebSocket disconnected:', event.code, event.reason);
+                this.stopKeepalive();
+                if (this.terminalContent) {
+                    this.appendToTerminal(`⚠️ Disconnected (code: ${event.code})\n`, 'error');
                 }
-                console.error('Failed to parse WebSocket message:', e);
-            }
-        };
-        
-        this.ws.onclose = (event) => {
-            console.log('WebSocket disconnected:', event.code, event.reason);
-            this.stopKeepalive();
-            this.appendToTerminal(`⚠️ Disconnected (code: ${event.code})\n`, 'error');
-            this.attemptReconnect();
+                this.attemptReconnect();
         };
         
         this.ws.onerror = (error) => {
             console.error('WebSocket error:', error);
-            this.appendToTerminal('❌ WebSocket connection error\n', 'error');
-        };
+                if (this.terminalContent) {
+                    this.appendToTerminal('❌ WebSocket connection error\n', 'error');
+                }
+            };
+        } catch (e) {
+            console.error('Failed to create WebSocket:', e);
+        }
     }
     
     startKeepalive() {
@@ -223,7 +241,7 @@ class DoViConvertApp {
             this.appendToTerminal('❌ Failed to reconnect. Please refresh the page.\n', 'error');
         }
     }
-
+    
     handleMessage(data) {
         switch (data.type) {
             case 'status':
@@ -399,7 +417,7 @@ class DoViConvertApp {
             }
         }
     }
-
+    
     async loadSettings() {
         try {
             const response = await fetch('/api/settings');
@@ -409,7 +427,7 @@ class DoViConvertApp {
             console.error('Failed to load settings:', error);
         }
     }
-
+    
     applySettings(settings) {
         if (settings.scan_path) {
             this.scanPathInput.value = settings.scan_path;
@@ -428,7 +446,7 @@ class DoViConvertApp {
             this.autoCleanupCheckbox.checked = settings.auto_cleanup;
         }
     }
-
+    
     async saveSettings() {
         const settings = {
             scan_path: this.scanPathInput.value,
@@ -448,9 +466,18 @@ class DoViConvertApp {
             console.error('Failed to save settings:', error);
         }
     }
-
+    
     async startScan() {
         this.clearTerminal();
+        
+        // Ensure WebSocket is connected before starting scan
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            this.appendToTerminal('🔌 Reconnecting WebSocket...\n', 'system');
+            this.connectWebSocket();
+            // Wait a moment for connection
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
         this.appendToTerminal('📡 Sending scan request...\n', 'system');
         
         try {
@@ -468,7 +495,7 @@ class DoViConvertApp {
             console.error('Scan error:', error);
         }
     }
-
+    
     async startConvert() {
         this.clearTerminal();
         try {
@@ -477,7 +504,7 @@ class DoViConvertApp {
             this.appendToTerminal(`❌ Failed to start conversion: ${error.message}\n`, 'error');
         }
     }
-
+    
     async stopProcess() {
         try {
             await fetch('/api/stop', { method: 'POST' });
@@ -575,7 +602,7 @@ class DoViConvertApp {
         item.addEventListener('click', () => this.loadDirectory(path));
         return item;
     }
-
+    
     selectDirectory() {
         this.scanPathInput.value = this.currentPath;
         this.saveSettings();
