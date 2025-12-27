@@ -923,6 +923,8 @@ async def run_convert(files: List[str] = None):
     safe_mode = state.settings.get("safe_mode", False)
     include_simple = state.settings.get("include_simple_fel", False)
     
+    conversion_results = []  # Track success/failure for each file
+    
     try:
         if files:
             # Convert specific files
@@ -935,34 +937,63 @@ async def run_convert(files: List[str] = None):
                     break
                 
                 filename = Path(filepath).name
+                
+                # Send initial progress
                 await broadcast_message({
                     "type": "progress",
                     "data": {
                         "current": i,
                         "total": total,
-                        "percent": round((i / total) * 100),
+                        "percent": round(((i - 1) / total) * 100),
                         "filename": filename,
-                        "status": "converting"
+                        "status": "converting",
+                        "step": "Starting...",
+                        "file_percent": 0
                     }
                 })
                 
-                await broadcast_message({"type": "output", "data": f"\n[{i}/{total}] {filename}\n"})
+                await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
+                await broadcast_message({"type": "output", "data": f"[{i}/{total}] {filename}\n"})
+                await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
                 
                 cmd = ["/usr/local/bin/dovi_convert", "-y"]
                 if safe_mode:
                     cmd.append("-safe")
                 cmd.append(filepath)
                 
-                await run_command(cmd, cwd=str(Path(filepath).parent))
+                # Run command and track result
+                success = await run_convert_command(cmd, cwd=str(Path(filepath).parent), 
+                                                    file_num=i, total_files=total, filename=filename)
                 
-                state.add_to_history(filename, "success")
-                
-                # Update cache - file was converted
-                if filepath in state.scan_cache.get("files", {}):
-                    state.scan_cache["files"][filepath]["profile"] = "profile8"
-                    state.save_scan_cache()
+                if success:
+                    conversion_results.append({"file": filename, "status": "success"})
+                    state.add_to_history(filename, "success")
+                    await broadcast_message({"type": "output", "data": f"\n✅ {filename} - CONVERTED SUCCESSFULLY\n"})
+                    
+                    # Update cache - file was converted
+                    if filepath in state.scan_cache.get("files", {}):
+                        state.scan_cache["files"][filepath]["profile"] = "profile8"
+                        state.save_scan_cache()
+                else:
+                    conversion_results.append({"file": filename, "status": "failed"})
+                    state.add_to_history(filename, "failed")
+                    await broadcast_message({"type": "output", "data": f"\n❌ {filename} - CONVERSION FAILED\n"})
             
-            await broadcast_message({"type": "conversion_complete", "data": {}})
+            # Final summary
+            successful = sum(1 for r in conversion_results if r["status"] == "success")
+            failed = sum(1 for r in conversion_results if r["status"] == "failed")
+            
+            await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
+            await broadcast_message({"type": "output", "data": f"📊 CONVERSION SUMMARY\n"})
+            await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
+            await broadcast_message({"type": "output", "data": f"✅ Successful: {successful}\n"})
+            await broadcast_message({"type": "output", "data": f"❌ Failed: {failed}\n"})
+            await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
+            
+            await broadcast_message({
+                "type": "conversion_complete", 
+                "data": {"successful": successful, "failed": failed, "results": conversion_results}
+            })
         else:
             # Batch conversion
             await broadcast_message({"type": "output", "data": f"🎬 Starting batch conversion in: {scan_path}\n"})
@@ -1036,6 +1067,107 @@ async def run_command(cmd: list, cwd: str = None):
         await broadcast_message({"type": "output", "data": f"❌ Shell not found: {str(e)}\n"})
     except Exception as e:
         await broadcast_message({"type": "output", "data": f"❌ Error: {type(e).__name__}: {str(e)}\n"})
+
+
+async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, total_files: int = 1, filename: str = ""):
+    """Run a conversion command with progress parsing."""
+    import re
+    
+    try:
+        # Check if main executable exists first
+        main_cmd = cmd[0]
+        if main_cmd.startswith('/') and not Path(main_cmd).exists():
+            await broadcast_message({"type": "output", "data": f"❌ Script not found: {main_cmd}\n"})
+            return False
+        
+        # Join command into a string for shell execution
+        cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        
+        process = await asyncio.create_subprocess_shell(
+            cmd_str,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd
+        )
+        
+        state.current_process = process
+        current_step = "Initializing"
+        file_percent = 0
+        
+        # Progress patterns to match dovi_convert output
+        step_patterns = [
+            (r"Extracting|Extract", "Extracting video stream"),
+            (r"Analyzing|Analyz", "Analyzing Dolby Vision"),
+            (r"Converting|Convert", "Converting to Profile 8"),
+            (r"Remux|Muxing|mux", "Remuxing to MKV"),
+            (r"Cleanup|Clean", "Cleaning up temp files"),
+            (r"Verif", "Verifying output"),
+            (r"Progress|progress", "Processing"),
+        ]
+        
+        # Percentage pattern
+        percent_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*%')
+        
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+            
+            text = line.decode('utf-8', errors='replace')
+            await broadcast_message({"type": "output", "data": text})
+            
+            # Parse step from output
+            for pattern, step_name in step_patterns:
+                if re.search(pattern, text, re.IGNORECASE):
+                    current_step = step_name
+                    break
+            
+            # Parse percentage from output
+            percent_match = percent_pattern.search(text)
+            if percent_match:
+                try:
+                    file_percent = min(99, int(float(percent_match.group(1))))
+                except:
+                    pass
+            
+            # Send progress update
+            overall_percent = round(((file_num - 1) / total_files) * 100 + (file_percent / total_files))
+            await broadcast_message({
+                "type": "progress",
+                "data": {
+                    "current": file_num,
+                    "total": total_files,
+                    "percent": overall_percent,
+                    "filename": filename,
+                    "status": "converting",
+                    "step": current_step,
+                    "file_percent": file_percent
+                }
+            })
+        
+        await process.wait()
+        
+        # Final progress for this file
+        if process.returncode == 0:
+            await broadcast_message({
+                "type": "progress",
+                "data": {
+                    "current": file_num,
+                    "total": total_files,
+                    "percent": round((file_num / total_files) * 100),
+                    "filename": filename,
+                    "status": "converting",
+                    "step": "Complete",
+                    "file_percent": 100
+                }
+            })
+            return True
+        else:
+            return False
+            
+    except Exception as e:
+        await broadcast_message({"type": "output", "data": f"❌ Error: {type(e).__name__}: {str(e)}\n"})
+        return False
 
 
 def setup_scheduled_scan():

@@ -669,6 +669,17 @@ class DoViConvertApp {
                 break;
             case 'conversion_complete':
                 this.loadStats();
+                this.loadCachedResults();
+                // Show completion summary
+                if (data.data && (data.data.successful !== undefined || data.data.failed !== undefined)) {
+                    const success = data.data.successful || 0;
+                    const failed = data.data.failed || 0;
+                    if (failed > 0) {
+                        this.showPopup(`Conversion complete: ${success} successful, ${failed} failed`, 'warning');
+                    } else if (success > 0) {
+                        this.showPopup(`Conversion complete: ${success} file(s) converted successfully!`, 'success');
+                    }
+                }
                 break;
         }
     }
@@ -683,19 +694,38 @@ class DoViConvertApp {
         
         if (!container) return;
         
-        if (progress.status === 'scanning' || progress.status === 'converting') {
+        if (progress.status === 'scanning') {
             container.style.display = 'block';
-            // Remove indeterminate animation when we have real progress
             fill.classList.remove('indeterminate');
             fill.style.width = `${progress.percent}%`;
             stats.textContent = `${progress.current} / ${progress.total}`;
             if (percent) percent.textContent = `${progress.percent}%`;
             detail.textContent = progress.filename ? `📄 ${progress.filename}` : 'Processing...';
-            label.textContent = progress.status === 'scanning' ? 'Scanning files...' : 'Converting...';
+            label.textContent = 'Scanning files...';
             
-            // Show ETA if available
             if (progress.eta) {
                 detail.textContent += ` (ETA: ${progress.eta})`;
+            }
+        } else if (progress.status === 'converting') {
+            container.style.display = 'block';
+            fill.classList.remove('indeterminate');
+            fill.style.width = `${progress.percent}%`;
+            stats.textContent = `File ${progress.current} / ${progress.total}`;
+            if (percent) percent.textContent = `${progress.percent}%`;
+            
+            // Show detailed conversion info
+            let detailText = progress.filename ? `📄 ${progress.filename}` : 'Processing...';
+            if (progress.step) {
+                detailText += ` • ${progress.step}`;
+            }
+            if (progress.file_percent !== undefined && progress.file_percent > 0) {
+                detailText += ` (${progress.file_percent}%)`;
+            }
+            detail.textContent = detailText;
+            label.textContent = 'Converting...';
+            
+            if (progress.eta) {
+                detail.textContent += ` • ETA: ${progress.eta}`;
             }
         } else if (progress.status === 'complete') {
             fill.classList.remove('indeterminate');
