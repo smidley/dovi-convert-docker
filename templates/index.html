@@ -348,9 +348,15 @@
                             Jellyfin Integration
                         </h3>
                         
+                        <p class="setting-description">
+                            Use Jellyfin's pre-indexed media database for instant scanning. 
+                            Since Jellyfin already collects HDR metadata during library scans, 
+                            this is much faster than scanning files directly with mediainfo.
+                        </p>
+                        
                         <div class="setting-item checkbox">
                             <input type="checkbox" id="useJellyfin">
-                            <label for="useJellyfin">Use Jellyfin for scanning</label>
+                            <label for="useJellyfin">Enable Jellyfin scanning</label>
                         </div>
                         
                         <div class="jellyfin-config" id="jellyfinConfig">

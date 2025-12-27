@@ -175,7 +175,7 @@ body::before {
 /* Main Content */
 .main-content {
     display: grid;
-    grid-template-columns: 380px 1fr;
+    grid-template-columns: minmax(340px, 420px) 1fr;
     gap: var(--space-xl);
     flex: 1;
 }
@@ -214,20 +214,22 @@ body::before {
 /* Control Panel Tabs */
 .control-tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--space-xs);
 }
 
 .control-tab-btn {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
-    padding: var(--space-sm) var(--space-md);
+    gap: 4px;
+    padding: 6px 10px;
     background: transparent;
     border: 1px solid var(--border-color);
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     font-family: var(--font-primary);
-    font-size: 0.8125rem;
+    font-size: 0.75rem;
+    white-space: nowrap;
     font-weight: 500;
     cursor: pointer;
     transition: var(--transition-fast);
@@ -313,6 +315,17 @@ body::before {
 
 .settings-section-title .jellyfin-icon {
     color: #a359d9;
+}
+
+.setting-description {
+    font-size: 0.8125rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: var(--space-md);
+    padding: var(--space-sm) var(--space-md);
+    background: var(--surface-1);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent-primary);
 }
 
 .path-selector {
