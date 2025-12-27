@@ -1480,6 +1480,34 @@ body::before {
     flex-shrink: 0;
 }
 
+.history-item:hover {
+    background: var(--surface-2);
+    transform: translateX(2px);
+    transition: all 0.15s ease;
+}
+
+/* Log Markers */
+.log-marker {
+    display: block;
+    height: 0;
+    visibility: hidden;
+}
+
+.log-highlight {
+    animation: highlightPulse 2s ease-out;
+}
+
+@keyframes highlightPulse {
+    0% {
+        background: var(--accent-primary);
+        box-shadow: 0 0 10px var(--accent-primary);
+    }
+    100% {
+        background: transparent;
+        box-shadow: none;
+    }
+}
+
 /* Backup Management */
 .backup-info {
     display: flex;

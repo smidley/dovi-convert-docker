@@ -463,13 +463,24 @@ class DoViConvertApp {
                 historyList.innerHTML = stats.history.slice(0, 10).map(h => {
                     const statusIcon = h.status === 'success' ? '✅' : '❌';
                     const statusClass = h.status === 'success' ? 'success' : 'failed';
+                    const logId = h.log_id || '';
                     return `
-                    <div class="history-item ${statusClass}">
+                    <div class="history-item ${statusClass}" data-log-id="${logId}" style="cursor: pointer;" title="Click to view log">
                         <span class="history-status">${statusIcon}</span>
                         <span class="history-file" title="${h.filename}">${h.filename}</span>
                         <span class="history-date">${new Date(h.date).toLocaleDateString()}</span>
                     </div>
                 `}).join('');
+                
+                // Add click handlers for history items
+                historyList.querySelectorAll('.history-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const logId = item.dataset.logId;
+                        if (logId) {
+                            this.scrollToLog(logId);
+                        }
+                    });
+                });
             }
         }
     }
@@ -663,6 +674,9 @@ class DoViConvertApp {
                 break;
             case 'output':
                 this.appendToTerminal(data.data);
+                break;
+            case 'log_marker':
+                this.addLogMarker(data.data.id, data.data.filename);
                 break;
             case 'results':
                 this.displayResults(data.data);
@@ -973,7 +987,11 @@ class DoViConvertApp {
                     if (this.logHistory.length > 0 && this.terminalContent) {
                         this.terminalContent.innerHTML = '';
                         this.logHistory.forEach(entry => {
-                            this.appendToTerminalDirect(entry.text, entry.type);
+                            if (entry.type === 'marker' && entry.logId) {
+                                this.addLogMarkerDirect(entry.logId, entry.filename);
+                            } else {
+                                this.appendToTerminalDirect(entry.text, entry.type);
+                            }
                         });
                         this.appendToTerminal('── Session restored ──\n', 'system');
                     }
@@ -1207,6 +1225,57 @@ class DoViConvertApp {
         this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
     }
 
+    addLogMarker(logId, filename) {
+        if (!this.terminalContent) return;
+        
+        this.addLogMarkerDirect(logId, filename);
+        
+        // Also store in log history for restoration
+        this.logHistory.push({ text: '', type: 'marker', logId, filename, time: Date.now() });
+        this.saveState();
+    }
+    
+    addLogMarkerDirect(logId, filename) {
+        if (!this.terminalContent) return;
+        
+        // Create an invisible anchor element for scrolling
+        const marker = document.createElement('span');
+        marker.id = `log-${logId}`;
+        marker.className = 'log-marker';
+        marker.dataset.filename = filename;
+        this.terminalContent.appendChild(marker);
+    }
+    
+    scrollToLog(logId) {
+        // Switch to log tab first
+        this.switchTab('output');
+        
+        // Find the marker
+        const marker = document.getElementById(`log-${logId}`);
+        if (marker) {
+            // Highlight the marker briefly
+            marker.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            
+            // Find the next sibling elements and highlight them
+            let el = marker.nextElementSibling;
+            const toHighlight = [];
+            let count = 0;
+            while (el && count < 10) {
+                toHighlight.push(el);
+                el = el.nextElementSibling;
+                count++;
+            }
+            
+            // Add highlight animation
+            toHighlight.forEach(span => {
+                span.classList.add('log-highlight');
+                setTimeout(() => span.classList.remove('log-highlight'), 2000);
+            });
+        } else {
+            this.showPopup('Log entry not found - it may have been cleared', 'warning');
+        }
+    }
+    
     clearTerminal() {
         if (this.terminalContent) this.terminalContent.innerHTML = '';
         this.logHistory = [];

@@ -103,11 +103,12 @@ class AppState:
         with open(history_file, "w") as f:
             json.dump(self.conversion_history[-100:], f, indent=2)  # Keep last 100
     
-    def add_to_history(self, filename: str, status: str = "success"):
+    def add_to_history(self, filename: str, status: str = "success", log_id: str = None):
         self.conversion_history.append({
             "filename": filename,
             "date": datetime.now().isoformat(),
-            "status": status
+            "status": status,
+            "log_id": log_id or datetime.now().strftime("%Y%m%d%H%M%S%f")
         })
         self.save_history()
 
@@ -1010,6 +1011,8 @@ async def run_convert(files: List[str] = None):
                     break
                 
                 filename = Path(filepath).name
+                # Generate unique log ID for this conversion
+                log_id = datetime.now().strftime("%Y%m%d%H%M%S%f")
                 
                 # Check if file exists, try to remap path if not
                 actual_filepath = filepath
@@ -1029,10 +1032,11 @@ async def run_convert(files: List[str] = None):
                         actual_filepath = found_path
                         await broadcast_message({"type": "output", "data": f"✅ Found at: {actual_filepath}\n"})
                     else:
+                        await broadcast_message({"type": "log_marker", "data": {"id": log_id, "filename": filename}})
                         await broadcast_message({"type": "output", "data": f"❌ Could not locate file: {filename}\n"})
                         await broadcast_message({"type": "output", "data": f"💡 Make sure your media is mounted at: {scan_path}\n"})
                         conversion_results.append({"file": filename, "status": "failed"})
-                        state.add_to_history(filename, "failed")
+                        state.add_to_history(filename, "failed", log_id)
                         continue
                 
                 # Send initial progress
@@ -1049,6 +1053,8 @@ async def run_convert(files: List[str] = None):
                     }
                 })
                 
+                # Output log marker with ID for linking from history
+                await broadcast_message({"type": "log_marker", "data": {"id": log_id, "filename": filename}})
                 await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
                 await broadcast_message({"type": "output", "data": f"[{i}/{total}] {filename}\n"})
                 await broadcast_message({"type": "output", "data": f"📁 Path: {actual_filepath}\n"})
@@ -1065,7 +1071,7 @@ async def run_convert(files: List[str] = None):
                 
                 if success:
                     conversion_results.append({"file": filename, "status": "success"})
-                    state.add_to_history(filename, "success")
+                    state.add_to_history(filename, "success", log_id)
                     await broadcast_message({"type": "output", "data": f"\n✅ {filename} - CONVERTED SUCCESSFULLY\n"})
                     
                     # Update cache - file was converted (update both original and actual path)
@@ -1080,7 +1086,7 @@ async def run_convert(files: List[str] = None):
                         await refresh_jellyfin_item(actual_filepath)
                 else:
                     conversion_results.append({"file": filename, "status": "failed"})
-                    state.add_to_history(filename, "failed")
+                    state.add_to_history(filename, "failed", log_id)
                     await broadcast_message({"type": "output", "data": f"\n❌ {filename} - CONVERSION FAILED\n"})
             
             # Final summary
