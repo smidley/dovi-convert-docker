@@ -91,6 +91,10 @@
             <section class="output-panel">
                 <div class="panel-header">
                     <h2>Output</h2>
+                    <div class="panel-tabs">
+                        <button class="tab-btn active" data-tab="output">Log</button>
+                        <button class="tab-btn" data-tab="results">Results <span class="result-count" id="resultCount"></span></button>
+                    </div>
                     <button class="btn btn-ghost" id="clearBtn" title="Clear output">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M3 6h18"></path>
@@ -99,10 +103,24 @@
                         </svg>
                     </button>
                 </div>
-                <div class="terminal" id="terminal">
-                    <div class="terminal-content" id="terminalContent">
-                        <p class="welcome-msg">Welcome to DoVi Convert</p>
-                        <p class="welcome-msg dim">Configure your media directory and click "Scan for DV Files" to begin.</p>
+                
+                <!-- Log Tab -->
+                <div class="tab-content active" id="outputTab">
+                    <div class="terminal" id="terminal">
+                        <div class="terminal-content" id="terminalContent">
+                            <p class="welcome-msg">Welcome to DoVi Convert</p>
+                            <p class="welcome-msg dim">Configure your media directory and click "Scan for DV Files" to begin.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Results Tab -->
+                <div class="tab-content" id="resultsTab">
+                    <div class="results-container">
+                        <div class="results-summary" id="resultsSummary">
+                            <p class="no-results">No scan results yet. Run a scan to find Dolby Vision files.</p>
+                        </div>
+                        <div class="results-list" id="resultsList"></div>
                     </div>
                 </div>
             </section>

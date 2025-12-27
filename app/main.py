@@ -32,10 +32,12 @@ CONFIG_PATH = os.environ.get("CONFIG_PATH", "/config")
 class AppState:
     def __init__(self):
         self.is_running = False
-        self.current_process: Optional[subprocess.Popen] = None
+        self.scan_cancelled = False
+        self.current_process = None
         self.websocket_clients: list[WebSocket] = []
         self.scan_path = MEDIA_PATH
         self.settings = self.load_settings()
+        self.scan_results = []
     
     def load_settings(self) -> dict:
         settings_file = Path(CONFIG_PATH) / "settings.json"
@@ -200,12 +202,15 @@ async def start_convert():
 @app.post("/api/stop")
 async def stop_process():
     """Stop the current running process."""
-    if state.current_process:
-        state.current_process.terminate()
-        await broadcast_message({"type": "output", "data": "\n⚠️ Process terminated by user\n"})
-        await broadcast_message({"type": "status", "running": False})
-        state.is_running = False
-        return {"status": "stopped"}
+    if state.is_running:
+        state.scan_cancelled = True
+        if state.current_process:
+            try:
+                state.current_process.terminate()
+            except:
+                pass
+        await broadcast_message({"type": "output", "data": "\n⚠️ Stop requested...\n"})
+        return {"status": "stopping"}
     raise HTTPException(status_code=404, detail="No process running")
 
 
@@ -278,8 +283,9 @@ async def broadcast_message(message: dict):
 
 
 async def run_scan():
-    """Run the dovi_convert scan operation with detailed output."""
+    """Run fast Dolby Vision scan using mediainfo."""
     state.is_running = True
+    state.scan_cancelled = False
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     depth = state.settings.get("scan_depth", 5)
     
@@ -289,7 +295,7 @@ async def run_scan():
     })
     await broadcast_message({
         "type": "output", 
-        "data": f"🔍 DOLBY VISION SCAN\n"
+        "data": f"🔍 DOLBY VISION SCAN (Fast Mode)\n"
     })
     await broadcast_message({
         "type": "output", 
@@ -305,7 +311,7 @@ async def run_scan():
     })
     
     try:
-        # First, let's find all MKV files and show progress
+        # Find all MKV files
         await broadcast_message({"type": "output", "data": "🔎 Searching for MKV files...\n\n"})
         
         find_cmd = ["find", scan_path, "-maxdepth", str(depth), "-type", "f", "-name", "*.mkv"]
@@ -323,149 +329,150 @@ async def run_scan():
                 "type": "output", 
                 "data": f"⚠️ No MKV files found in {scan_path}\n"
             })
-            await broadcast_message({
-                "type": "output", 
-                "data": f"   Make sure your media path is correctly mapped.\n\n"
-            })
         else:
             await broadcast_message({
                 "type": "output", 
                 "data": f"📂 Found {len(mkv_files)} MKV file(s)\n\n"
             })
             
-            # Show first few files
-            for i, f in enumerate(mkv_files[:10]):
-                filename = Path(f).name
-                await broadcast_message({
-                    "type": "output", 
-                    "data": f"   • {filename}\n"
-                })
-            
-            if len(mkv_files) > 10:
-                await broadcast_message({
-                    "type": "output", 
-                    "data": f"   ... and {len(mkv_files) - 10} more\n"
-                })
-            
-            await broadcast_message({"type": "output", "data": "\n"})
-        
-        # Check if dovi_convert exists
-        await broadcast_message({"type": "output", "data": "🔧 Checking tools...\n"})
-        
-        import shutil
-        dovi_convert_path = shutil.which("dovi_convert")
-        dovi_tool_path = shutil.which("dovi_tool")
-        mediainfo_path = shutil.which("mediainfo")
-        
-        await broadcast_message({
-            "type": "output", 
-            "data": f"   • dovi_convert: {'✅ Found' if dovi_convert_path else '❌ Not found'}\n"
-        })
-        await broadcast_message({
-            "type": "output", 
-            "data": f"   • dovi_tool: {'✅ Found' if dovi_tool_path else '❌ Not found'}\n"
-        })
-        await broadcast_message({
-            "type": "output", 
-            "data": f"   • mediainfo: {'✅ Found' if mediainfo_path else '❌ Not found'}\n\n"
-        })
-        
-        if not dovi_convert_path:
-            await broadcast_message({
-                "type": "output", 
-                "data": "⬇️ Downloading dovi_convert script...\n"
-            })
-            download_cmd = [
-                "wget", "-q", 
-                "https://raw.githubusercontent.com/cryptochrome/dovi_convert/main/dovi_convert.sh",
-                "-O", "/usr/local/bin/dovi_convert"
-            ]
-            download_proc = await asyncio.create_subprocess_exec(*download_cmd)
-            await download_proc.wait()
-            
-            chmod_proc = await asyncio.create_subprocess_exec("chmod", "+x", "/usr/local/bin/dovi_convert")
-            await chmod_proc.wait()
-            
-            await broadcast_message({"type": "output", "data": "✅ Downloaded dovi_convert\n\n"})
-        
-        # Now run the actual scan using -check command
-        if mkv_files:
             await broadcast_message({
                 "type": "output", 
                 "data": f"{'─'*60}\n"
             })
             await broadcast_message({
                 "type": "output", 
-                "data": "🎬 Scanning for Dolby Vision Profile 7 files...\n"
+                "data": "🎬 Scanning for Dolby Vision using mediainfo (fast)...\n"
             })
             await broadcast_message({
                 "type": "output", 
                 "data": f"{'─'*60}\n\n"
             })
             
-            # Get unique directories containing MKV files
-            directories = set()
-            for f in mkv_files:
-                directories.add(str(Path(f).parent))
+            # Results storage
+            dv_profile7_files = []
+            dv_profile8_files = []
+            hdr10_files = []
+            sdr_files = []
             
-            await broadcast_message({
-                "type": "output", 
-                "data": f"📂 Checking {len(directories)} directories...\n\n"
-            })
-            
-            dv_files_found = []
-            
-            for i, directory in enumerate(sorted(directories), 1):
-                dir_name = Path(directory).name
-                await broadcast_message({
-                    "type": "output", 
-                    "data": f"[{i}/{len(directories)}] {dir_name}...\n"
-                })
-                
-                # Run dovi_convert -check in each directory
-                try:
-                    process = await asyncio.create_subprocess_exec(
-                        "dovi_convert", "-check",
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                        cwd=directory
-                    )
-                    
-                    stdout, _ = await process.communicate()
-                    output = stdout.decode('utf-8', errors='replace')
-                    
-                    # Check if any DV Profile 7 files found (look for "Profile 7" in output)
-                    if "Profile 7" in output or "DV7" in output:
-                        # Show the output for this directory
-                        await broadcast_message({
-                            "type": "output", 
-                            "data": f"\n🎯 Found DV files in: {dir_name}\n"
-                        })
-                        for line in output.split('\n'):
-                            if line.strip() and ("Profile 7" in line or "DV7" in line or "---" in line or "Filename" in line):
-                                await broadcast_message({
-                                    "type": "output", 
-                                    "data": f"   {line}\n"
-                                })
-                        dv_files_found.append(directory)
-                        
-                except Exception as e:
+            for i, filepath in enumerate(mkv_files, 1):
+                # Check if cancelled
+                if state.scan_cancelled:
                     await broadcast_message({
                         "type": "output", 
-                        "data": f"   ⚠️ Error: {str(e)}\n"
+                        "data": "\n⚠️ Scan cancelled by user\n"
                     })
+                    break
+                
+                filename = Path(filepath).name
+                
+                # Show progress every 10 files or for small counts
+                if i % 50 == 0 or i <= 5 or len(mkv_files) < 100:
+                    await broadcast_message({
+                        "type": "output", 
+                        "data": f"[{i}/{len(mkv_files)}] Checking: {filename[:50]}...\n"
+                    })
+                
+                try:
+                    # Use mediainfo to get HDR format quickly
+                    proc = await asyncio.create_subprocess_exec(
+                        "mediainfo", "--Output=Video;%HDR_Format%\\n%HDR_Format_Profile%",
+                        filepath,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    stdout, _ = await proc.communicate()
+                    hdr_info = stdout.decode().strip()
+                    
+                    if "Dolby Vision" in hdr_info:
+                        if "dvhe.07" in hdr_info or "Profile 7" in hdr_info.replace(" ", ""):
+                            dv_profile7_files.append({
+                                "path": filepath,
+                                "name": filename,
+                                "hdr": hdr_info.replace('\n', ' '),
+                                "action": "Convert to Profile 8.1"
+                            })
+                        else:
+                            dv_profile8_files.append({
+                                "path": filepath,
+                                "name": filename,
+                                "hdr": hdr_info.replace('\n', ' '),
+                                "action": "Already compatible"
+                            })
+                    elif "HDR10" in hdr_info or "SMPTE ST 2086" in hdr_info:
+                        hdr10_files.append(filepath)
+                    else:
+                        sdr_files.append(filepath)
+                        
+                except Exception as e:
+                    pass  # Skip files that can't be read
+            
+            # Send results to frontend
+            await broadcast_message({
+                "type": "output", 
+                "data": f"\n{'='*60}\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": "📊 SCAN RESULTS\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": f"{'='*60}\n\n"
+            })
             
             await broadcast_message({
                 "type": "output", 
-                "data": f"\n{'─'*60}\n"
+                "data": f"🎯 DV Profile 7 (need conversion): {len(dv_profile7_files)}\n"
             })
             await broadcast_message({
                 "type": "output", 
-                "data": f"📊 Summary: Found {len(dv_files_found)} directories with DV Profile 7 files\n"
+                "data": f"✅ DV Profile 8 (compatible):       {len(dv_profile8_files)}\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": f"🔶 HDR10:                           {len(hdr10_files)}\n"
+            })
+            await broadcast_message({
+                "type": "output", 
+                "data": f"⚪ SDR:                             {len(sdr_files)}\n\n"
+            })
+            
+            # Show Profile 7 files that need conversion
+            if dv_profile7_files:
+                await broadcast_message({
+                    "type": "output", 
+                    "data": f"{'─'*60}\n"
+                })
+                await broadcast_message({
+                    "type": "output", 
+                    "data": "🎯 FILES NEEDING CONVERSION:\n"
+                })
+                await broadcast_message({
+                    "type": "output", 
+                    "data": f"{'─'*60}\n\n"
+                })
+                
+                for f in dv_profile7_files:
+                    await broadcast_message({
+                        "type": "output", 
+                        "data": f"  📄 {f['name']}\n"
+                    })
+                    await broadcast_message({
+                        "type": "output", 
+                        "data": f"     HDR: {f['hdr']}\n\n"
+                    })
+            
+            # Send results data for the results pane
+            await broadcast_message({
+                "type": "results",
+                "data": {
+                    "profile7": dv_profile7_files,
+                    "profile8": dv_profile8_files,
+                    "hdr10_count": len(hdr10_files),
+                    "sdr_count": len(sdr_files)
+                }
             })
         
-    except FileNotFoundError as e:
-        await broadcast_message({"type": "output", "data": f"\n❌ Command not found: {str(e)}\n"})
     except Exception as e:
         await broadcast_message({"type": "output", "data": f"\n❌ Error: {type(e).__name__}: {str(e)}\n"})
     finally:
@@ -482,6 +489,7 @@ async def run_scan():
             "data": f"{'='*60}\n"
         })
         state.is_running = False
+        state.scan_cancelled = False
         state.current_process = None
         await broadcast_message({"type": "status", "running": False})
 

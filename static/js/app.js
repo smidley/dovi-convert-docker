@@ -102,6 +102,11 @@ class DoViConvertApp {
         
         // Initialize tooltips
         this.initTooltips();
+        
+        // Tab switching
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => this.switchTab(btn.dataset.tab));
+        });
     }
     
     initTooltips() {
@@ -230,7 +235,107 @@ class DoViConvertApp {
             case 'output':
                 this.appendToTerminal(data.data);
                 break;
+            case 'results':
+                this.displayResults(data.data);
+                break;
+            case 'keepalive':
+                // Ignore keepalive messages
+                break;
         }
+    }
+    
+    displayResults(results) {
+        const summary = document.getElementById('resultsSummary');
+        const list = document.getElementById('resultsList');
+        const countBadge = document.getElementById('resultCount');
+        
+        if (!summary || !list) return;
+        
+        const profile7 = results.profile7 || [];
+        const profile8 = results.profile8 || [];
+        
+        // Update count badge
+        if (countBadge) {
+            countBadge.textContent = profile7.length > 0 ? profile7.length : '';
+        }
+        
+        // Update summary
+        summary.innerHTML = `
+            <div class="stats">
+                <div class="stat profile7">
+                    <span class="stat-value">${profile7.length}</span>
+                    <span class="stat-label">Need Conversion<br>(Profile 7)</span>
+                </div>
+                <div class="stat profile8">
+                    <span class="stat-value">${profile8.length}</span>
+                    <span class="stat-label">Compatible<br>(Profile 8)</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value">${results.hdr10_count || 0}</span>
+                    <span class="stat-label">HDR10</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-value">${results.sdr_count || 0}</span>
+                    <span class="stat-label">SDR</span>
+                </div>
+            </div>
+        `;
+        
+        // Update list
+        list.innerHTML = '';
+        
+        if (profile7.length === 0 && profile8.length === 0) {
+            list.innerHTML = '<p class="no-results">No Dolby Vision files found.</p>';
+            return;
+        }
+        
+        // Show Profile 7 files first (need conversion)
+        profile7.forEach(file => {
+            const item = document.createElement('div');
+            item.className = 'result-item';
+            item.innerHTML = `
+                <div class="file-info">
+                    <div class="file-name" title="${file.name}">${file.name}</div>
+                    <div class="file-meta">${file.hdr}</div>
+                </div>
+                <div class="file-action">
+                    <span class="badge convert">Needs Conversion</span>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+        
+        // Show Profile 8 files (already compatible)
+        profile8.forEach(file => {
+            const item = document.createElement('div');
+            item.className = 'result-item';
+            item.innerHTML = `
+                <div class="file-info">
+                    <div class="file-name" title="${file.name}">${file.name}</div>
+                    <div class="file-meta">${file.hdr}</div>
+                </div>
+                <div class="file-action">
+                    <span class="badge compatible">Compatible</span>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+        
+        // Switch to results tab
+        this.switchTab('results');
+    }
+    
+    switchTab(tabName) {
+        const tabs = document.querySelectorAll('.tab-btn');
+        const contents = document.querySelectorAll('.tab-content');
+        
+        tabs.forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.tab === tabName);
+        });
+        
+        contents.forEach(content => {
+            content.classList.toggle('active', content.id === tabName + 'Tab');
+        });
     }
 
     updateStatus(running, action = '') {
