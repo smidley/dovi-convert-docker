@@ -162,16 +162,30 @@ async def get_status():
 @app.get("/api/debug")
 async def debug_info():
     import shutil
+    import subprocess
     
-    dovi_convert_exists = Path("/usr/local/bin/dovi_convert").exists()
+    dovi_convert_path = "/usr/local/bin/dovi_convert"
+    dovi_convert_exists = Path(dovi_convert_path).exists()
+    
+    # Get script info if it exists
+    script_info = None
+    if dovi_convert_exists:
+        try:
+            result = subprocess.run(["head", "-5", dovi_convert_path], capture_output=True, text=True)
+            script_info = result.stdout[:200] if result.returncode == 0 else "Could not read"
+        except:
+            script_info = "Error reading script"
     
     return {
-        "dovi_convert": "/usr/local/bin/dovi_convert" if dovi_convert_exists else None,
+        "dovi_convert": dovi_convert_path if dovi_convert_exists else None,
         "dovi_convert_exists": dovi_convert_exists,
+        "dovi_convert_executable": os.access(dovi_convert_path, os.X_OK) if dovi_convert_exists else False,
+        "script_preview": script_info,
         "dovi_tool": shutil.which("dovi_tool"),
         "ffmpeg": shutil.which("ffmpeg"),
         "mediainfo": shutil.which("mediainfo"),
         "bash": shutil.which("bash"),
+        "sh": shutil.which("sh"),
         "media_path": MEDIA_PATH,
         "media_exists": Path(MEDIA_PATH).exists(),
         "config_path": CONFIG_PATH,
@@ -980,15 +994,24 @@ async def run_convert(files: List[str] = None):
 async def run_command(cmd: list, cwd: str = None):
     """Run a command and stream output."""
     try:
-        # Join command into a string and use shell execution for better compatibility
+        # Check if main executable exists first
+        main_cmd = cmd[0]
+        if main_cmd.startswith('/') and not Path(main_cmd).exists():
+            await broadcast_message({"type": "output", "data": f"❌ Script not found: {main_cmd}\n"})
+            await broadcast_message({"type": "output", "data": "💡 Try pulling the latest Docker image:\n"})
+            await broadcast_message({"type": "output", "data": "   docker pull smidley/dovi-convert:latest\n"})
+            return
+        
+        # Join command into a string for shell execution
         cmd_str = " ".join(f'"{c}"' if " " in c else c for c in cmd)
+        
+        await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n"})
         
         process = await asyncio.create_subprocess_shell(
             cmd_str,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            cwd=cwd,
-            executable="/bin/sh"
+            cwd=cwd
         )
         
         state.current_process = process
@@ -1005,12 +1028,14 @@ async def run_command(cmd: list, cwd: str = None):
         
         if process.returncode == 0:
             await broadcast_message({"type": "output", "data": "\n✅ Completed successfully\n"})
+        elif process.returncode == 127:
+            await broadcast_message({"type": "output", "data": f"\n❌ Command not found (exit 127). Script may be missing.\n"})
         else:
             await broadcast_message({"type": "output", "data": f"\n⚠️ Exited with code {process.returncode}\n"})
-    except FileNotFoundError:
-        await broadcast_message({"type": "output", "data": f"❌ Command not found: {cmd[0]}\n"})
+    except FileNotFoundError as e:
+        await broadcast_message({"type": "output", "data": f"❌ Shell not found: {str(e)}\n"})
     except Exception as e:
-        await broadcast_message({"type": "output", "data": f"❌ Error: {str(e)}\n"})
+        await broadcast_message({"type": "output", "data": f"❌ Error: {type(e).__name__}: {str(e)}\n"})
 
 
 def setup_scheduled_scan():
