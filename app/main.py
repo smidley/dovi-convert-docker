@@ -1111,11 +1111,27 @@ async def run_convert(files: List[str] = None):
                     }
                 })
                 
+                # Get file size for progress estimation
+                file_size = 0
+                file_size_str = ""
+                try:
+                    file_size = Path(actual_filepath).stat().st_size
+                    if file_size > 1024**3:
+                        file_size_str = f"{file_size / 1024**3:.1f} GB"
+                    elif file_size > 1024**2:
+                        file_size_str = f"{file_size / 1024**2:.1f} MB"
+                    else:
+                        file_size_str = f"{file_size / 1024:.1f} KB"
+                except:
+                    pass
+                
                 # Output log marker with ID for linking from history
                 await broadcast_message({"type": "log_marker", "data": {"id": log_id, "filename": filename}})
                 await broadcast_message({"type": "output", "data": f"\n{'='*60}\n"})
                 await broadcast_message({"type": "output", "data": f"[{i}/{total}] {filename}\n"})
                 await broadcast_message({"type": "output", "data": f"📁 Path: {actual_filepath}\n"})
+                if file_size_str:
+                    await broadcast_message({"type": "output", "data": f"📊 Size: {file_size_str}\n"})
                 await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
                 
                 cmd = ["/usr/local/bin/dovi_convert", "-convert", actual_filepath]
@@ -1127,7 +1143,8 @@ async def run_convert(files: List[str] = None):
                 
                 # Run command and track result
                 success = await run_convert_command(cmd, cwd=str(Path(actual_filepath).parent), 
-                                                    file_num=i, total_files=total, filename=filename)
+                                                    file_num=i, total_files=total, filename=filename,
+                                                    file_size=file_size)
                 
                 if success:
                     # Verify conversion by checking for backup file
@@ -1265,11 +1282,11 @@ async def run_command(cmd: list, cwd: str = None):
         await broadcast_message({"type": "output", "data": f"❌ Error: {type(e).__name__}: {str(e)}\n"})
 
 
-async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, total_files: int = 1, filename: str = ""):
+async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, total_files: int = 1, filename: str = "", file_size: int = 0):
     """Run a conversion command with progress parsing."""
     import re
     
-    logger.info(f"Running conversion [{file_num}/{total_files}]: {filename}")
+    logger.info(f"Running conversion [{file_num}/{total_files}]: {filename} ({file_size / 1024**3:.1f} GB)" if file_size else f"Running conversion [{file_num}/{total_files}]: {filename}")
     
     try:
         # Check if main executable exists first
@@ -1324,10 +1341,20 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         
         current_step_num = 0
         total_steps = 3  # dovi_convert typically has 3 steps: Extract, Convert, Remux
+        script_elapsed_secs = 0  # Elapsed time parsed from script output
+        
+        # Estimate expected time based on file size
+        # Typical speeds: SSD ~400MB/s, HDD ~150MB/s, Network ~100MB/s
+        # Conservative estimate: ~100 MB/s average, mostly extraction time
+        # Extraction is ~70% of total time, Convert ~20%, Remux ~10%
+        estimated_total_time = 0
+        if file_size > 0:
+            # Rough estimate: 1 minute per 6GB (100 MB/s)
+            estimated_total_time = (file_size / (100 * 1024 * 1024)) * 1.3  # 30% buffer for convert/remux
         
         async def process_line(text):
             """Process a single line of output"""
-            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update, current_step_num
+            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update, current_step_num, script_elapsed_secs
             
             output_lines.append(text)
             await broadcast_message({"type": "output", "data": text})
@@ -1341,16 +1368,39 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             if re.search(r'successfully|completed|done|finished|✓|SUCCESS', text, re.IGNORECASE):
                 saw_success = True
             
+            # Parse elapsed time from script output like "(1m 44s)" or "(5s)"
+            time_match = re.search(r'\((\d+)m\s*(\d+)s\)', text)
+            if time_match:
+                script_elapsed_secs = int(time_match.group(1)) * 60 + int(time_match.group(2))
+            else:
+                time_match_sec = re.search(r'\((\d+)s\)', text)
+                if time_match_sec:
+                    script_elapsed_secs = int(time_match_sec.group(1))
+            
             # Parse step number from output like "[1/3] Extracting..."
             step_match = re.search(r'\[(\d+)/(\d+)\]', text)
             if step_match:
                 current_step_num = int(step_match.group(1))
                 total_steps_parsed = int(step_match.group(2))
                 if total_steps_parsed > 0:
-                    # Estimate file progress based on step (each step is ~equal time for extraction-heavy jobs)
-                    # Step 1 = 0-33%, Step 2 = 33-66%, Step 3 = 66-100%
-                    base_percent = ((current_step_num - 1) / total_steps_parsed) * 100
-                    file_percent = int(base_percent)
+                    total_steps = total_steps_parsed
+                    # Calculate progress based on step and elapsed time
+                    # Step weight: Extract ~70%, Convert ~20%, Remux ~10%
+                    step_weights = [0.70, 0.20, 0.10]  # Cumulative: 0, 70, 90, 100
+                    step_starts = [0, 70, 90]
+                    
+                    if current_step_num <= len(step_weights):
+                        base_percent = step_starts[current_step_num - 1] if current_step_num > 0 else 0
+                        step_weight = step_weights[current_step_num - 1] if current_step_num > 0 else step_weights[0]
+                        
+                        # Estimate progress within step using elapsed time if we have file size estimate
+                        if estimated_total_time > 0 and script_elapsed_secs > 0:
+                            # Estimate how far through current step based on time
+                            step_expected_time = estimated_total_time * step_weight
+                            step_progress = min(0.95, script_elapsed_secs / step_expected_time) if step_expected_time > 0 else 0
+                            file_percent = int(base_percent + (step_weight * 100 * step_progress))
+                        else:
+                            file_percent = int(base_percent)
             
             # Parse step name from output
             for pattern, step_name in step_patterns:
@@ -1365,9 +1415,11 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                     explicit_percent = int(float(percent_match.group(1)))
                     # If we have step info, add percentage within step
                     if current_step_num > 0:
-                        base_percent = ((current_step_num - 1) / total_steps) * 100
-                        step_range = 100 / total_steps
-                        file_percent = int(base_percent + (explicit_percent / 100 * step_range))
+                        step_weights = [0.70, 0.20, 0.10]
+                        step_starts = [0, 70, 90]
+                        base_percent = step_starts[current_step_num - 1] if current_step_num <= len(step_starts) else 90
+                        step_weight = step_weights[current_step_num - 1] if current_step_num <= len(step_weights) else 0.10
+                        file_percent = int(base_percent + (explicit_percent / 100 * step_weight * 100))
                     else:
                         file_percent = min(99, explicit_percent)
                 except:
@@ -1379,22 +1431,33 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                 last_progress_update = current_time
                 elapsed = current_time - start_time
                 
-                # Calculate ETA based on step progress
+                # Calculate ETA
                 eta_str = ""
-                if file_percent > 5 and elapsed > 5:  # Need some progress to estimate
+                remaining = 0
+                
+                # Use file-size-based estimate if available
+                if estimated_total_time > 0 and elapsed > 5:
+                    # Adjust estimate based on actual progress
+                    if file_percent > 5:
+                        actual_rate = elapsed / (file_percent / 100)
+                        remaining = actual_rate - elapsed
+                    else:
+                        remaining = estimated_total_time - elapsed
+                elif file_percent > 5 and elapsed > 5:
                     estimated_total = elapsed / (file_percent / 100)
                     remaining = estimated_total - elapsed
-                    if remaining > 0:
-                        if remaining < 60:
-                            eta_str = f"{int(remaining)}s"
-                        elif remaining < 3600:
-                            mins = int(remaining // 60)
-                            secs = int(remaining % 60)
-                            eta_str = f"{mins}m {secs}s"
-                        else:
-                            hours = int(remaining // 3600)
-                            mins = int((remaining % 3600) // 60)
-                            eta_str = f"{hours}h {mins}m"
+                
+                if remaining > 0:
+                    if remaining < 60:
+                        eta_str = f"{int(remaining)}s"
+                    elif remaining < 3600:
+                        mins = int(remaining // 60)
+                        secs = int(remaining % 60)
+                        eta_str = f"{mins}m {secs}s"
+                    else:
+                        hours = int(remaining // 3600)
+                        mins = int((remaining % 3600) // 60)
+                        eta_str = f"{hours}h {mins}m"
                 
                 overall_percent = round(((file_num - 1) / total_files) * 100 + (file_percent / total_files))
                 
