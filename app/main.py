@@ -1883,7 +1883,7 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         
         async def process_line(text):
             """Process a single line of output"""
-            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update, current_step_num, script_elapsed_secs
+            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update, current_step_num, total_steps, script_elapsed_secs
             
             output_lines.append(text)
             await broadcast_message({"type": "output", "data": text})
