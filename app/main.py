@@ -1338,6 +1338,11 @@ async def run_convert(files: List[str] = None):
                 if not Path(actual_filepath).exists():
                     # Try to find the file by searching in scan_path
                     await broadcast_message({"type": "output", "data": f"⚠️ File not found at: {filepath}\n"})
+                    
+                    # Log the attempted path corrections
+                    logger.info(f"Path correction attempt - original: {filepath}")
+                    logger.info(f"Path correction attempt - actual_filepath: {actual_filepath}")
+                    
                     await broadcast_message({"type": "output", "data": f"🔍 Searching in {scan_path}...\n"})
                     
                     # Normalize filename for comparison (handle Unicode like Æ vs Ae)
@@ -1358,23 +1363,31 @@ async def run_convert(files: List[str] = None):
                         return normalized.lower()
                     
                     target_normalized = normalize_name(filename)
+                    logger.info(f"Searching for filename: {filename}")
+                    logger.info(f"Normalized target: {target_normalized}")
                     
                     # Search for the file by name (with Unicode normalization)
                     found_path = None
+                    dirs_searched = 0
                     for root, dirs, files_in_dir in os.walk(scan_path):
+                        dirs_searched += 1
                         # First try exact match
                         if filename in files_in_dir:
                             found_path = os.path.join(root, filename)
+                            logger.info(f"Found exact match: {found_path}")
                             break
                         
                         # Then try normalized match
                         for f in files_in_dir:
                             if normalize_name(f) == target_normalized:
                                 found_path = os.path.join(root, f)
+                                logger.info(f"Found normalized match: {found_path}")
                                 break
                         
                         if found_path:
                             break
+                    
+                    logger.info(f"Searched {dirs_searched} directories, found_path: {found_path}")
                     
                     if found_path and Path(found_path).exists():
                         actual_filepath = found_path
