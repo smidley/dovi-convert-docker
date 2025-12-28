@@ -1410,7 +1410,18 @@ class DoViConvertApp {
                 this.updateJellyfinBadge('connected', `Connected: ${data.server_name}`);
                 if (!silent && this.jellyfinStatus) {
                     this.jellyfinStatus.className = 'jellyfin-status success';
-                    this.jellyfinStatus.textContent = `✓ Connected to ${serverInfo}`;
+                    let statusText = `✓ Connected to ${serverInfo}`;
+                    
+                    // Show library paths warning if available
+                    if (data.library_paths && data.library_paths.length > 0) {
+                        const paths = data.library_paths.slice(0, 3).join(', ');
+                        statusText += `\n📁 Library paths: ${paths}`;
+                        if (data.path_warning) {
+                            statusText += `\n⚠️ ${data.path_warning}`;
+                        }
+                    }
+                    this.jellyfinStatus.textContent = statusText;
+                    this.jellyfinStatus.style.whiteSpace = 'pre-line';
                 }
             } else {
                 this.updateJellyfinBadge('error', 'Connection failed');

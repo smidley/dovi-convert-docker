@@ -535,6 +535,55 @@ async def browse_directory(path: str = "/"):
         raise HTTPException(status_code=403, detail="Permission denied")
 
 
+@app.get("/api/jellyfin/libraries")
+async def get_jellyfin_libraries():
+    """Get Jellyfin library paths to help with path mapping."""
+    url = state.settings.get("jellyfin_url", "")
+    api_key = state.settings.get("jellyfin_api_key", "")
+    
+    if not url or not api_key:
+        raise HTTPException(status_code=400, detail="Jellyfin URL and API key are required")
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"X-Emby-Token": api_key}
+            async with session.get(f"{url}/Library/VirtualFolders", headers=headers) as resp:
+                if resp.status == 200:
+                    libraries = await resp.json()
+                    result = []
+                    all_paths = set()
+                    
+                    for lib in libraries:
+                        lib_info = {
+                            "name": lib.get("Name", "Unknown"),
+                            "type": lib.get("CollectionType", "unknown"),
+                            "paths": lib.get("Locations", [])
+                        }
+                        result.append(lib_info)
+                        for p in lib_info["paths"]:
+                            all_paths.add(p)
+                    
+                    # Extract common root paths
+                    root_paths = set()
+                    for p in all_paths:
+                        # Get the first directory component after root
+                        parts = p.strip('/').split('/')
+                        if parts:
+                            root_paths.add('/' + parts[0])
+                    
+                    return {
+                        "success": True,
+                        "libraries": result,
+                        "all_paths": list(all_paths),
+                        "root_paths": list(root_paths),
+                        "suggestion": "Mount these paths in your container with matching names"
+                    }
+                else:
+                    raise HTTPException(status_code=resp.status, detail="Failed to get Jellyfin libraries")
+    except aiohttp.ClientError as e:
+        raise HTTPException(status_code=500, detail=f"Connection error: {str(e)}")
+
+
 @app.post("/api/jellyfin/test")
 async def test_jellyfin():
     url = state.settings.get("jellyfin_url", "")
@@ -549,11 +598,29 @@ async def test_jellyfin():
             async with session.get(f"{url}/System/Info", headers=headers) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    return {
+                    result = {
                         "success": True,
                         "server_name": data.get("ServerName", "Unknown"),
                         "version": data.get("Version", "Unknown")
                     }
+                    
+                    # Also get library paths for path mapping help
+                    try:
+                        async with session.get(f"{url}/Library/VirtualFolders", headers=headers) as lib_resp:
+                            if lib_resp.status == 200:
+                                libraries = await lib_resp.json()
+                                paths = []
+                                for lib in libraries:
+                                    for p in lib.get("Locations", []):
+                                        if p not in paths:
+                                            paths.append(p)
+                                result["library_paths"] = paths
+                                if paths:
+                                    result["path_warning"] = f"Jellyfin uses paths like: {paths[0]}. Make sure these are mounted in the container."
+                    except:
+                        pass
+                    
+                    return result
                 else:
                     raise HTTPException(status_code=resp.status, detail="Failed to connect to Jellyfin")
     except aiohttp.ClientError as e:
