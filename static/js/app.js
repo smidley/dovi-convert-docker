@@ -827,6 +827,12 @@ class DoViConvertApp {
                 if (response.ok) {
                     const status = await response.json();
                     this.updateStatus(status.is_running, status.action);
+                    
+                    // Update progress if available and running
+                    if (status.is_running && status.progress && Object.keys(status.progress).length > 0) {
+                        this.updateProgress(status.progress);
+                    }
+                    
                     // If we're polling and server is not running, refresh results
                     if (!status.is_running && this.wasRunning) {
                         this.loadStats();
@@ -1277,6 +1283,17 @@ class DoViConvertApp {
             if (status.is_running) {
                 this.updateStatus(true, status.action || 'scan');
                 this.appendToTerminal('🔄 Process still running on server...\n', 'system');
+                
+                // Restore progress if available
+                if (status.progress && Object.keys(status.progress).length > 0) {
+                    this.updateProgress(status.progress);
+                    
+                    // If converting a specific file, update its status in results
+                    if (status.progress.current_file) {
+                        this.currentConvertingFile = status.progress.current_file;
+                        this.updateConvertingFileStatus(status.progress.current_file);
+                    }
+                }
             }
         } catch (error) {
             console.error('Failed to check server status:', error);

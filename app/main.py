@@ -67,6 +67,7 @@ class AppState:
         self.scan_cancelled = False
         self.current_process = None
         self.current_action = None
+        self.current_progress = {}  # Track current progress for reconnecting clients
         self.websocket_clients: list[WebSocket] = []
         self.scan_path = MEDIA_PATH
         self.settings = self.load_settings()
@@ -186,6 +187,7 @@ async def get_status():
     return {
         "is_running": state.is_running,
         "action": state.current_action,
+        "progress": state.current_progress,
         "settings": state.settings,
         "media_path": MEDIA_PATH,
         "websocket_clients": len(state.websocket_clients)
@@ -615,11 +617,20 @@ async def websocket_endpoint(websocket: WebSocket):
     logger.info(f"WebSocket connected. Total clients: {len(state.websocket_clients)}")
     
     try:
+        # Send current status including progress if conversion is running
         await websocket.send_json({
             "type": "status",
             "running": state.is_running,
+            "action": state.current_action,
             "settings": state.settings
         })
+        
+        # If a conversion is in progress, send current progress
+        if state.is_running and state.current_progress:
+            await websocket.send_json({
+                "type": "progress",
+                "data": state.current_progress
+            })
         
         while True:
             try:
@@ -644,6 +655,13 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def broadcast_message(message: dict):
     msg_type = message.get("type", "unknown")
+    
+    # Store progress state for reconnecting clients
+    if msg_type == "progress":
+        state.current_progress = message.get("data", {})
+        # Clear progress when complete
+        if state.current_progress.get("status") == "complete":
+            state.current_progress = {}
     
     if not state.websocket_clients:
         # Log important messages that would be missed
@@ -1230,6 +1248,7 @@ async def run_convert(files: List[str] = None):
                         "total": total,
                         "percent": round(((i - 1) / total) * 100),
                         "filename": filename,
+                        "current_file": actual_filepath,
                         "status": "converting",
                         "step": "Starting...",
                         "file_percent": 0
@@ -1269,7 +1288,7 @@ async def run_convert(files: List[str] = None):
                 # Run command and track result
                 success = await run_convert_command(cmd, cwd=str(Path(actual_filepath).parent), 
                                                     file_num=i, total_files=total, filename=filename,
-                                                    file_size=file_size)
+                                                    file_size=file_size, filepath=actual_filepath)
                 
                 if success:
                     # Verify conversion by checking for backup file
@@ -1407,7 +1426,7 @@ async def run_command(cmd: list, cwd: str = None):
         await broadcast_message({"type": "output", "data": f"❌ Error: {type(e).__name__}: {str(e)}\n"})
 
 
-async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, total_files: int = 1, filename: str = "", file_size: int = 0):
+async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, total_files: int = 1, filename: str = "", file_size: int = 0, filepath: str = ""):
     """Run a conversion command with progress parsing."""
     import re
     
@@ -1598,7 +1617,7 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                         "total": total_files,
                         "percent": overall_percent,
                         "filename": filename,
-                        "filepath": cwd,
+                        "current_file": filepath,
                         "status": "converting",
                         "step": step_display,
                         "file_percent": file_percent,
@@ -1658,6 +1677,7 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                     "total": total_files,
                     "percent": round((file_num / total_files) * 100),
                     "filename": filename,
+                    "current_file": filepath,
                     "status": "converting",
                     "step": "Complete",
                     "file_percent": 100
