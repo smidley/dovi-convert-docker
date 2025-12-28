@@ -1259,7 +1259,7 @@ async def run_scan(incremental: bool = True):
 
 
 async def copy_file_with_progress(src: str, dst: str, file_num: int, total_files: int, filename: str, operation: str = "Copying"):
-    """Copy a file with progress updates."""
+    """Copy a file with progress updates using async I/O."""
     src_path = Path(src)
     dst_path = Path(dst)
     
@@ -1267,51 +1267,104 @@ async def copy_file_with_progress(src: str, dst: str, file_num: int, total_files
         raise FileNotFoundError(f"Source file not found: {src}")
     
     file_size = src_path.stat().st_size
+    file_size_gb = file_size / (1024**3)
+    
+    # Format size for display
+    if file_size > 1024**3:
+        size_str = f"{file_size_gb:.1f} GB"
+    elif file_size > 1024**2:
+        size_str = f"{file_size / (1024**2):.1f} MB"
+    else:
+        size_str = f"{file_size / 1024:.1f} KB"
+    
+    await broadcast_message({"type": "output", "data": f"\n{'─'*50}\n"})
+    await broadcast_message({"type": "output", "data": f"📋 {operation}: {filename}\n"})
+    await broadcast_message({"type": "output", "data": f"📊 Size: {size_str}\n"})
+    await broadcast_message({"type": "output", "data": f"📍 From: {src}\n"})
+    await broadcast_message({"type": "output", "data": f"📍 To: {dst}\n"})
+    await broadcast_message({"type": "output", "data": f"{'─'*50}\n\n"})
+    
     copied = 0
-    chunk_size = 1024 * 1024 * 10  # 10MB chunks
+    chunk_size = 1024 * 1024 * 50  # 50MB chunks for better throughput
     start_time = asyncio.get_event_loop().time()
     last_update = start_time
-    
-    await broadcast_message({"type": "output", "data": f"📋 {operation} to temp storage...\n"})
+    last_output_update = start_time
     
     try:
+        # Use run_in_executor for non-blocking file I/O
+        loop = asyncio.get_event_loop()
+        
+        def copy_chunk(fsrc, fdst, size):
+            """Read and write a chunk, return bytes copied."""
+            chunk = fsrc.read(size)
+            if chunk:
+                fdst.write(chunk)
+            return len(chunk) if chunk else 0
+        
         with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
             while True:
-                chunk = fsrc.read(chunk_size)
-                if not chunk:
-                    break
-                fdst.write(chunk)
-                copied += len(chunk)
+                # Run the blocking I/O in a thread pool
+                bytes_copied = await loop.run_in_executor(None, copy_chunk, fsrc, fdst, chunk_size)
                 
-                current_time = asyncio.get_event_loop().time()
-                # Update progress every 500ms
-                if current_time - last_update >= 0.5:
-                    last_update = current_time
-                    percent = (copied / file_size) * 100
-                    elapsed = current_time - start_time
-                    speed = copied / elapsed if elapsed > 0 else 0
-                    eta = (file_size - copied) / speed if speed > 0 else 0
+                if bytes_copied == 0:
+                    break
                     
-                    speed_str = f"{speed / 1024 / 1024:.1f} MB/s"
-                    eta_str = f"{int(eta)}s" if eta < 60 else f"{int(eta // 60)}m {int(eta % 60)}s"
+                copied += bytes_copied
+                current_time = asyncio.get_event_loop().time()
+                elapsed = current_time - start_time
+                
+                # Calculate progress
+                percent = (copied / file_size) * 100
+                speed = copied / elapsed if elapsed > 0 else 0
+                remaining_bytes = file_size - copied
+                eta = remaining_bytes / speed if speed > 0 else 0
+                
+                # Format strings
+                speed_str = f"{speed / (1024**2):.1f} MB/s"
+                copied_gb = copied / (1024**3)
+                
+                if eta < 60:
+                    eta_str = f"{int(eta)}s"
+                elif eta < 3600:
+                    eta_str = f"{int(eta // 60)}m {int(eta % 60)}s"
+                else:
+                    eta_str = f"{int(eta // 3600)}h {int((eta % 3600) // 60)}m"
+                
+                # Update progress bar frequently (every 200ms)
+                if current_time - last_update >= 0.2:
+                    last_update = current_time
                     
                     await broadcast_message({
                         "type": "progress",
                         "data": {
                             "current": file_num,
                             "total": total_files,
-                            "percent": int(((file_num - 1) / total_files) * 100),
+                            "percent": int(((file_num - 1) / total_files) * 100 + (percent * 0.1 / total_files)),
                             "filename": filename,
                             "current_file": src,
                             "status": "converting",
-                            "step": f"{operation}: {percent:.0f}% ({speed_str})",
-                            "file_percent": int(percent * 0.1),  # Copy is ~10% of total work
+                            "step": f"{operation}: {percent:.0f}% @ {speed_str}",
+                            "file_percent": int(percent * 0.1),
                             "eta": eta_str,
                             "elapsed": int(elapsed)
                         }
                     })
-                    # Allow other tasks to run
-                    await asyncio.sleep(0)
+                
+                # Output text update every 2 seconds
+                if current_time - last_output_update >= 2.0:
+                    last_output_update = current_time
+                    await broadcast_message({
+                        "type": "output", 
+                        "data": f"  📦 {copied_gb:.2f} / {file_size_gb:.2f} GB ({percent:.1f}%) - {speed_str} - ETA: {eta_str}\n"
+                    })
+        
+        # Final completion message
+        total_time = asyncio.get_event_loop().time() - start_time
+        avg_speed = file_size / total_time if total_time > 0 else 0
+        await broadcast_message({
+            "type": "output", 
+            "data": f"  ✅ Complete: {file_size_gb:.2f} GB in {int(total_time)}s ({avg_speed / (1024**2):.1f} MB/s avg)\n\n"
+        })
         
         return True
     except Exception as e:
@@ -1319,7 +1372,10 @@ async def copy_file_with_progress(src: str, dst: str, file_num: int, total_files
         await broadcast_message({"type": "output", "data": f"❌ Copy failed: {e}\n"})
         # Clean up partial file
         if dst_path.exists():
-            dst_path.unlink()
+            try:
+                dst_path.unlink()
+            except:
+                pass
         return False
 
 
@@ -1331,13 +1387,15 @@ async def move_file_with_progress(src: str, dst: str, file_num: int, total_files
     # If same filesystem, just rename (instant)
     try:
         os.rename(src, dst)
-        await broadcast_message({"type": "output", "data": f"📋 Moved result back to original location\n"})
+        await broadcast_message({"type": "output", "data": f"📋 Moved result to original location (instant)\n"})
         return True
     except OSError:
         # Cross-filesystem, need to copy then delete
-        await broadcast_message({"type": "output", "data": f"📋 Moving result back (cross-filesystem)...\n"})
-        if await copy_file_with_progress(src, dst, file_num, total_files, filename, "Moving back"):
-            src_path.unlink()
+        if await copy_file_with_progress(src, dst, file_num, total_files, filename, "Moving back to media"):
+            try:
+                src_path.unlink()
+            except:
+                pass
             return True
         return False
 
@@ -1531,10 +1589,9 @@ async def run_convert(files: List[str] = None):
                 # If using temp storage, copy file there first
                 if use_temp_storage:
                     temp_file = os.path.join(temp_path, filename)
-                    await broadcast_message({"type": "output", "data": f"\n📋 Copying to temp storage for faster conversion...\n"})
                     
                     copy_success = await copy_file_with_progress(
-                        actual_filepath, temp_file, i, total, filename, "Copying to temp"
+                        actual_filepath, temp_file, i, total, filename, "Copying to temp storage"
                     )
                     
                     if not copy_success:
