@@ -1191,6 +1191,90 @@ async def run_scan(incremental: bool = True):
         await broadcast_message({"type": "progress", "data": {"status": "complete"}})
 
 
+async def copy_file_with_progress(src: str, dst: str, file_num: int, total_files: int, filename: str, operation: str = "Copying"):
+    """Copy a file with progress updates."""
+    src_path = Path(src)
+    dst_path = Path(dst)
+    
+    if not src_path.exists():
+        raise FileNotFoundError(f"Source file not found: {src}")
+    
+    file_size = src_path.stat().st_size
+    copied = 0
+    chunk_size = 1024 * 1024 * 10  # 10MB chunks
+    start_time = asyncio.get_event_loop().time()
+    last_update = start_time
+    
+    await broadcast_message({"type": "output", "data": f"📋 {operation} to temp storage...\n"})
+    
+    try:
+        with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
+            while True:
+                chunk = fsrc.read(chunk_size)
+                if not chunk:
+                    break
+                fdst.write(chunk)
+                copied += len(chunk)
+                
+                current_time = asyncio.get_event_loop().time()
+                # Update progress every 500ms
+                if current_time - last_update >= 0.5:
+                    last_update = current_time
+                    percent = (copied / file_size) * 100
+                    elapsed = current_time - start_time
+                    speed = copied / elapsed if elapsed > 0 else 0
+                    eta = (file_size - copied) / speed if speed > 0 else 0
+                    
+                    speed_str = f"{speed / 1024 / 1024:.1f} MB/s"
+                    eta_str = f"{int(eta)}s" if eta < 60 else f"{int(eta // 60)}m {int(eta % 60)}s"
+                    
+                    await broadcast_message({
+                        "type": "progress",
+                        "data": {
+                            "current": file_num,
+                            "total": total_files,
+                            "percent": int(((file_num - 1) / total_files) * 100),
+                            "filename": filename,
+                            "current_file": src,
+                            "status": "converting",
+                            "step": f"{operation}: {percent:.0f}% ({speed_str})",
+                            "file_percent": int(percent * 0.1),  # Copy is ~10% of total work
+                            "eta": eta_str,
+                            "elapsed": int(elapsed)
+                        }
+                    })
+                    # Allow other tasks to run
+                    await asyncio.sleep(0)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Copy failed: {e}")
+        await broadcast_message({"type": "output", "data": f"❌ Copy failed: {e}\n"})
+        # Clean up partial file
+        if dst_path.exists():
+            dst_path.unlink()
+        return False
+
+
+async def move_file_with_progress(src: str, dst: str, file_num: int, total_files: int, filename: str):
+    """Move a file back from temp storage with progress."""
+    src_path = Path(src)
+    dst_path = Path(dst)
+    
+    # If same filesystem, just rename (instant)
+    try:
+        os.rename(src, dst)
+        await broadcast_message({"type": "output", "data": f"📋 Moved result back to original location\n"})
+        return True
+    except OSError:
+        # Cross-filesystem, need to copy then delete
+        await broadcast_message({"type": "output", "data": f"📋 Moving result back (cross-filesystem)...\n"})
+        if await copy_file_with_progress(src, dst, file_num, total_files, filename, "Moving back"):
+            src_path.unlink()
+            return True
+        return False
+
+
 async def run_convert(files: List[str] = None):
     """Run conversion on selected files or batch."""
     logger.info(f"Starting conversion - files: {len(files) if files else 'batch'}")
@@ -1198,7 +1282,10 @@ async def run_convert(files: List[str] = None):
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     safe_mode = state.settings.get("safe_mode", False)
     include_simple = state.settings.get("include_simple_fel", False)
-    logger.info(f"Conversion settings - safe_mode: {safe_mode}, include_simple: {include_simple}")
+    temp_path = state.settings.get("temp_path", "")
+    use_temp_storage = temp_path and os.path.isdir(temp_path) and safe_mode
+    
+    logger.info(f"Conversion settings - safe_mode: {safe_mode}, include_simple: {include_simple}, temp_path: {temp_path}")
     
     conversion_results = []  # Track success/failure for each file
     final_status = "complete"  # Track overall status for progress bar
@@ -1280,9 +1367,32 @@ async def run_convert(files: List[str] = None):
                 await broadcast_message({"type": "output", "data": f"📁 Path: {actual_filepath}\n"})
                 if file_size_str:
                     await broadcast_message({"type": "output", "data": f"📊 Size: {file_size_str}\n"})
+                if use_temp_storage:
+                    await broadcast_message({"type": "output", "data": f"💾 Temp storage: {temp_path}\n"})
                 await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
                 
-                cmd = ["/usr/local/bin/dovi_convert", "-convert", actual_filepath]
+                # Variables for temp storage workflow
+                convert_filepath = actual_filepath
+                temp_file = None
+                
+                # If using temp storage, copy file there first
+                if use_temp_storage:
+                    temp_file = os.path.join(temp_path, filename)
+                    await broadcast_message({"type": "output", "data": f"\n📋 Copying to temp storage for faster conversion...\n"})
+                    
+                    copy_success = await copy_file_with_progress(
+                        actual_filepath, temp_file, i, total, filename, "Copying to temp"
+                    )
+                    
+                    if not copy_success:
+                        conversion_results.append({"file": filename, "status": "failed"})
+                        state.add_to_history(filename, "failed", log_id)
+                        continue
+                    
+                    convert_filepath = temp_file
+                    await broadcast_message({"type": "output", "data": f"✅ Copied to temp storage\n\n"})
+                
+                cmd = ["/usr/local/bin/dovi_convert", "-convert", convert_filepath]
                 if safe_mode:
                     cmd.append("-safe")
                 if include_simple:
@@ -1290,17 +1400,54 @@ async def run_convert(files: List[str] = None):
                 cmd.append("-y")
                 
                 # Run command and track result
-                success = await run_convert_command(cmd, cwd=str(Path(actual_filepath).parent), 
+                success = await run_convert_command(cmd, cwd=str(Path(convert_filepath).parent), 
                                                     file_num=i, total_files=total, filename=filename,
                                                     file_size=file_size, filepath=actual_filepath)
                 
                 if success:
                     # Verify conversion by checking for backup file
-                    backup_path = actual_filepath + ".bak.dovi_convert"
+                    backup_path = convert_filepath + ".bak.dovi_convert"
                     backup_exists = Path(backup_path).exists()
                     
                     if backup_exists:
                         logger.info(f"Backup file verified: {backup_path}")
+                        
+                        # If using temp storage, move converted file back
+                        if use_temp_storage and temp_file:
+                            await broadcast_message({"type": "output", "data": f"\n📋 Moving converted file back to original location...\n"})
+                            
+                            # Move the converted file back to original location
+                            move_success = await move_file_with_progress(
+                                convert_filepath, actual_filepath, i, total, filename
+                            )
+                            
+                            if not move_success:
+                                logger.error("Failed to move converted file back")
+                                conversion_results.append({"file": filename, "status": "failed"})
+                                state.add_to_history(filename, "failed", log_id)
+                                await broadcast_message({"type": "output", "data": f"❌ Failed to move file back to original location\n"})
+                                # Clean up temp backup
+                                if Path(backup_path).exists():
+                                    Path(backup_path).unlink()
+                                continue
+                            
+                            # Move backup from temp to original location
+                            original_backup_path = actual_filepath + ".bak.dovi_convert"
+                            try:
+                                if Path(backup_path).exists():
+                                    # Try rename first (same filesystem)
+                                    try:
+                                        os.rename(backup_path, original_backup_path)
+                                    except OSError:
+                                        # Cross-filesystem copy
+                                        import shutil
+                                        shutil.move(backup_path, original_backup_path)
+                                    await broadcast_message({"type": "output", "data": f"📦 Backup moved to original location\n"})
+                            except Exception as e:
+                                logger.warning(f"Could not move backup: {e}")
+                            
+                            backup_path = original_backup_path
+                        
                         conversion_results.append({"file": filename, "status": "success"})
                         state.add_to_history(filename, "success", log_id)
                         await broadcast_message({"type": "output", "data": f"\n✅ {filename} - CONVERTED SUCCESSFULLY\n"})
@@ -1327,11 +1474,25 @@ async def run_convert(files: List[str] = None):
                         state.add_to_history(filename, "failed", log_id)
                         await broadcast_message({"type": "output", "data": f"\n⚠️ {filename} - NO BACKUP FILE CREATED\n"})
                         await broadcast_message({"type": "output", "data": f"💡 dovi_convert may have skipped this file (not Profile 7?) or failed silently\n"})
+                        
+                        # Clean up temp file if used
+                        if use_temp_storage and temp_file and Path(temp_file).exists():
+                            Path(temp_file).unlink()
                 
                 if not success:
                     conversion_results.append({"file": filename, "status": "failed"})
                     state.add_to_history(filename, "failed", log_id)
                     await broadcast_message({"type": "output", "data": f"\n❌ {filename} - CONVERSION FAILED\n"})
+                    
+                    # Clean up temp files if used
+                    if use_temp_storage and temp_file:
+                        for temp_cleanup in [temp_file, temp_file + ".bak.dovi_convert"]:
+                            if Path(temp_cleanup).exists():
+                                try:
+                                    Path(temp_cleanup).unlink()
+                                    logger.debug(f"Cleaned up temp file: {temp_cleanup}")
+                                except Exception as e:
+                                    logger.warning(f"Could not clean up {temp_cleanup}: {e}")
             
             # Final summary
             successful = sum(1 for r in conversion_results if r["status"] == "success")
