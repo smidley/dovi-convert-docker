@@ -283,6 +283,28 @@ async def update_settings(settings: SettingsUpdate):
     return state.settings
 
 
+class BackupStatsCache:
+    """Cache for backup statistics to avoid repeated filesystem walks."""
+    def __init__(self):
+        self.count = 0
+        self.size = 0
+        self.last_update = None
+        self.cache_ttl = 60  # Cache for 60 seconds
+    
+    def is_valid(self):
+        if self.last_update is None:
+            return False
+        return (datetime.now() - self.last_update).total_seconds() < self.cache_ttl
+    
+    def update(self, count: int, size: int):
+        self.count = count
+        self.size = size
+        self.last_update = datetime.now()
+
+
+backup_stats_cache = BackupStatsCache()
+
+
 @app.get("/api/stats")
 async def get_stats():
     """Get library statistics and backup info."""
@@ -294,20 +316,26 @@ async def get_stats():
     hdr10_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "hdr10")
     sdr_count = sum(1 for f in state.scan_cache.get("files", {}).values() if f.get("profile") == "sdr")
     
-    # Count backup files
-    backup_count = 0
-    backup_size = 0
-    try:
-        for root, _, files in os.walk(scan_path):
-            for f in files:
-                if f.endswith(('.bak', '.backup', '.original')):
-                    backup_count += 1
-                    try:
-                        backup_size += os.path.getsize(os.path.join(root, f))
-                    except:
-                        pass
-    except:
-        pass
+    # Use cached backup stats if available
+    if backup_stats_cache.is_valid():
+        backup_count = backup_stats_cache.count
+        backup_size = backup_stats_cache.size
+    else:
+        # Count backup files (expensive operation - cache it)
+        backup_count = 0
+        backup_size = 0
+        try:
+            for root, _, files in os.walk(scan_path):
+                for f in files:
+                    if f.endswith(('.bak', '.backup', '.original', '.bak.dovi_convert')):
+                        backup_count += 1
+                        try:
+                            backup_size += os.path.getsize(os.path.join(root, f))
+                        except:
+                            pass
+        except:
+            pass
+        backup_stats_cache.update(backup_count, backup_size)
     
     return {
         "profile7_count": profile7_count,
@@ -319,6 +347,50 @@ async def get_stats():
         "history": state.conversion_history[-20:],
         "last_scan": state.scan_cache.get("last_scan")
     }
+
+
+@app.get("/api/disk-space")
+async def get_disk_space_info():
+    """Get disk space info for scan path and temp storage."""
+    import shutil
+    
+    scan_path = state.settings.get("scan_path", MEDIA_PATH)
+    TEMP_STORAGE_PATH = "/temp_storage"
+    
+    result = {}
+    
+    # Scan path disk space
+    try:
+        if Path(scan_path).exists():
+            total, used, free = shutil.disk_usage(scan_path)
+            result["scan_path"] = {
+                "path": scan_path,
+                "total_gb": total / (1024**3),
+                "used_gb": used / (1024**3),
+                "free_gb": free / (1024**3),
+                "percent_used": round((used / total) * 100, 1)
+            }
+    except Exception as e:
+        result["scan_path"] = {"error": str(e)}
+    
+    # Temp storage disk space
+    try:
+        if os.path.isdir(TEMP_STORAGE_PATH) and os.path.ismount(TEMP_STORAGE_PATH):
+            total, used, free = shutil.disk_usage(TEMP_STORAGE_PATH)
+            result["temp_storage"] = {
+                "path": TEMP_STORAGE_PATH,
+                "mounted": True,
+                "total_gb": total / (1024**3),
+                "used_gb": used / (1024**3),
+                "free_gb": free / (1024**3),
+                "percent_used": round((used / total) * 100, 1)
+            }
+        else:
+            result["temp_storage"] = {"mounted": False}
+    except Exception as e:
+        result["temp_storage"] = {"error": str(e)}
+    
+    return result
 
 
 @app.get("/api/results")
@@ -1400,6 +1472,23 @@ async def move_file_with_progress(src: str, dst: str, file_num: int, total_files
         return False
 
 
+def get_disk_space(path: str) -> dict:
+    """Get disk space info for a path."""
+    try:
+        import shutil
+        total, used, free = shutil.disk_usage(path)
+        return {
+            "total": total,
+            "used": used,
+            "free": free,
+            "free_gb": free / (1024**3),
+            "percent_used": (used / total) * 100
+        }
+    except Exception as e:
+        logger.warning(f"Could not get disk space for {path}: {e}")
+        return None
+
+
 async def run_convert(files: List[str] = None):
     """Run conversion on selected files or batch."""
     logger.info(f"Starting conversion - files: {len(files) if files else 'batch'}")
@@ -1416,6 +1505,42 @@ async def run_convert(files: List[str] = None):
     temp_path = TEMP_STORAGE_PATH if use_temp_storage else ""
     
     logger.info(f"Conversion settings - safe_mode: {safe_mode}, include_simple: {include_simple}, use_temp_storage: {use_temp_storage_setting}, temp_available: {temp_storage_available}")
+    
+    # Check disk space before starting
+    if files:
+        largest_file_size = 0
+        for filepath in files:
+            try:
+                size = Path(filepath).stat().st_size if Path(filepath).exists() else 0
+                largest_file_size = max(largest_file_size, size)
+            except:
+                pass
+        
+        # Need at least 2x largest file size (for temp files during conversion)
+        required_space = largest_file_size * 2
+        required_space_gb = required_space / (1024**3)
+        
+        # Check temp storage space if using it
+        if use_temp_storage:
+            temp_space = get_disk_space(TEMP_STORAGE_PATH)
+            if temp_space and temp_space["free"] < required_space:
+                await broadcast_message({"type": "output", "data": f"❌ Insufficient space in temp storage!\n"})
+                await broadcast_message({"type": "output", "data": f"   Required: ~{required_space_gb:.1f} GB, Available: {temp_space['free_gb']:.1f} GB\n"})
+                await broadcast_message({"type": "output", "data": f"   Free up space or disable temp storage.\n"})
+                state.is_running = False
+                state.current_action = None
+                await broadcast_message({"type": "status", "running": False})
+                await broadcast_message({"type": "progress", "data": {"status": "failed"}})
+                return
+            elif temp_space:
+                await broadcast_message({"type": "output", "data": f"💾 Temp storage: {temp_space['free_gb']:.1f} GB free\n"})
+        
+        # Check destination space
+        dest_space = get_disk_space(scan_path)
+        if dest_space and dest_space["free"] < required_space:
+            await broadcast_message({"type": "output", "data": f"⚠️ Low disk space warning!\n"})
+            await broadcast_message({"type": "output", "data": f"   Required: ~{required_space_gb:.1f} GB, Available: {dest_space['free_gb']:.1f} GB\n"})
+            await broadcast_message({"type": "output", "data": f"   Conversion may fail if space runs out.\n\n"})
     
     conversion_results = []  # Track success/failure for each file
     final_status = "complete"  # Track overall status for progress bar
@@ -2155,6 +2280,34 @@ async def run_scheduler():
             await asyncio.sleep(60)
 
 
+def cleanup_temp_storage():
+    """Clean up any orphaned files in temp storage from previous runs."""
+    TEMP_STORAGE_PATH = "/temp_storage"
+    if not os.path.isdir(TEMP_STORAGE_PATH) or not os.path.ismount(TEMP_STORAGE_PATH):
+        return
+    
+    try:
+        cleaned = 0
+        freed = 0
+        for item in os.listdir(TEMP_STORAGE_PATH):
+            item_path = os.path.join(TEMP_STORAGE_PATH, item)
+            # Clean up any .mkv or .bak files left from interrupted conversions
+            if item.endswith(('.mkv', '.bak', '.bak.dovi_convert', '.hevc', '.bin', '.rpu')):
+                try:
+                    size = os.path.getsize(item_path)
+                    os.remove(item_path)
+                    cleaned += 1
+                    freed += size
+                    logger.info(f"Cleaned up orphaned temp file: {item}")
+                except Exception as e:
+                    logger.warning(f"Could not clean up {item_path}: {e}")
+        
+        if cleaned > 0:
+            logger.info(f"Cleaned up {cleaned} orphaned temp files, freed {freed / (1024**3):.2f} GB")
+    except Exception as e:
+        logger.warning(f"Error during temp storage cleanup: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize scheduler on startup."""
@@ -2166,6 +2319,9 @@ async def startup_event():
     logger.info(f"Cached files: {len(state.scan_cache.get('files', {}))}")
     logger.info(f"Conversion history: {len(state.conversion_history)} entries")
     logger.info("="*50)
+    
+    # Clean up any orphaned temp files from previous runs
+    cleanup_temp_storage()
     
     if state.settings.get("schedule_enabled"):
         logger.info("Scheduled scans enabled - starting scheduler")

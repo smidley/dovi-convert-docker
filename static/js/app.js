@@ -34,6 +34,10 @@ class DoViConvertApp {
         // Currently converting file (for UI status)
         this.currentlyConverting = null;
         
+        // Browser notifications
+        this.notificationsEnabled = false;
+        this.requestNotificationPermission();
+        
         console.log('Initializing elements...');
         this.initElements();
         console.log('Initializing event listeners...');
@@ -906,8 +910,10 @@ class DoViConvertApp {
                     const failed = data.data.failed || 0;
                     if (failed > 0) {
                         this.showPopup(`Conversion complete: ${success} successful, ${failed} failed`, 'warning');
+                        this.showBrowserNotification('Conversion Complete', `${success} successful, ${failed} failed`, 'warning');
                     } else if (success > 0) {
                         this.showPopup(`Conversion complete: ${success} file(s) converted successfully!`, 'success');
+                        this.showBrowserNotification('Conversion Complete', `${success} file(s) converted successfully!`, 'success');
                     }
                 }
                 break;
@@ -1707,6 +1713,50 @@ class DoViConvertApp {
         if (this.scanPathInput) this.scanPathInput.value = this.currentPath;
         this.saveSettings();
         this.closeModal();
+    }
+    
+    // Browser notification methods
+    requestNotificationPermission() {
+        if ('Notification' in window) {
+            if (Notification.permission === 'granted') {
+                this.notificationsEnabled = true;
+            } else if (Notification.permission !== 'denied') {
+                // Request permission on first user interaction
+                document.addEventListener('click', () => {
+                    Notification.requestPermission().then(permission => {
+                        this.notificationsEnabled = (permission === 'granted');
+                    });
+                }, { once: true });
+            }
+        }
+    }
+    
+    showBrowserNotification(title, body, type = 'info') {
+        // Only show if tab is not visible and notifications are enabled
+        if (document.visibilityState === 'visible') return;
+        if (!this.notificationsEnabled) return;
+        if (!('Notification' in window)) return;
+        
+        try {
+            const icon = type === 'success' ? '✅' : type === 'warning' ? '⚠️' : 'ℹ️';
+            const notification = new Notification(`${icon} ${title}`, {
+                body: body,
+                icon: '/static/favicon.svg',
+                tag: 'dovi-convert',
+                requireInteraction: false
+            });
+            
+            // Auto-close after 5 seconds
+            setTimeout(() => notification.close(), 5000);
+            
+            // Focus window when clicked
+            notification.onclick = () => {
+                window.focus();
+                notification.close();
+            };
+        } catch (e) {
+            console.warn('Could not show notification:', e);
+        }
     }
 }
 
