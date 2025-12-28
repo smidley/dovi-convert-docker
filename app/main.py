@@ -87,6 +87,7 @@ class AppState:
             "safe_mode": False,
             "include_simple_fel": False,
             "scan_depth": 5,
+            "temp_path": "",  # Empty = use same directory as source file
             "include_movies": True,
             "include_tv_shows": True,
             "jellyfin_url": "",
@@ -155,6 +156,7 @@ class SettingsUpdate(BaseModel):
     safe_mode: Optional[bool] = None
     include_simple_fel: Optional[bool] = None
     scan_depth: Optional[int] = None
+    temp_path: Optional[str] = None
     include_movies: Optional[bool] = None
     include_tv_shows: Optional[bool] = None
     jellyfin_url: Optional[str] = None
@@ -251,6 +253,8 @@ async def update_settings(settings: SettingsUpdate):
         state.settings["include_simple_fel"] = settings.include_simple_fel
     if settings.scan_depth is not None:
         state.settings["scan_depth"] = max(1, min(10, settings.scan_depth))
+    if settings.temp_path is not None:
+        state.settings["temp_path"] = settings.temp_path
     if settings.include_movies is not None:
         state.settings["include_movies"] = settings.include_movies
     if settings.include_tv_shows is not None:
@@ -1448,13 +1452,23 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         # Multiple 'y' answers in case there are multiple prompts
         full_cmd = f"echo 'y\ny\ny' | {cmd_str}"
         
+        # Set up environment with custom temp path if configured
+        env = os.environ.copy()
+        temp_path = state.settings.get("temp_path", "")
+        if temp_path and os.path.isdir(temp_path):
+            env["TMPDIR"] = temp_path
+            env["TEMP"] = temp_path
+            env["TMP"] = temp_path
+            await broadcast_message({"type": "output", "data": f"📁 Using temp storage: {temp_path}\n"})
+        
         await broadcast_message({"type": "output", "data": f"🔧 Running: {cmd_str}\n\n"})
         
         process = await asyncio.create_subprocess_shell(
             full_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
-            cwd=cwd
+            cwd=cwd,
+            env=env
         )
         
         state.current_process = process
