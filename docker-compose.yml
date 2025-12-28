@@ -8,14 +8,16 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      # Mount your media directories
-      - /path/to/your/media:/media
+      # Mount your media directories - paths should match Jellyfin if using integration
+      - /path/to/your/movies:/movies
+      - /path/to/your/tv:/tv
       # Persistent configuration
       - dovi-convert-config:/config
+      # Optional: Fast temp storage for conversions (SSD recommended)
+      # Mount this, then enable "Use Temp Storage" in Settings
+      - /path/to/fast/storage:/temp_storage
     environment:
       - TZ=America/New_York
-      - MEDIA_PATH=/media
-      - CONFIG_PATH=/config
     restart: unless-stopped
 
 volumes:
