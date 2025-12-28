@@ -445,6 +445,11 @@ async def restore_backup(request: RestoreRequest):
             state.scan_cache["files"][original_path]["profile"] = "profile7"
             state.save_scan_cache()
         
+        # Refresh Jellyfin metadata if enabled
+        if state.settings.get("use_jellyfin"):
+            logger.info("Jellyfin integration enabled - triggering metadata refresh after restore")
+            await refresh_jellyfin_item(original_path)
+        
         return {
             "success": True,
             "restored": original_name,
