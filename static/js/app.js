@@ -109,6 +109,9 @@ class DoViConvertApp {
         this.clearQueueBtn = getEl('clearQueueBtn');
         this.startQueueBtn = getEl('startQueueBtn');
         this.cleanBackupsBtn = getEl('cleanBackupsBtn');
+        this.manageBackupsBtn = getEl('manageBackupsBtn');
+        this.backupsModal = getEl('backupsModal');
+        this.backupList = getEl('backupList');
         
         // Search and filter
         this.searchInput = getEl('searchResults');
@@ -150,6 +153,7 @@ class DoViConvertApp {
         addListener(this.clearQueueBtn, 'click', () => this.clearQueue());
         addListener(this.startQueueBtn, 'click', () => this.startQueue());
         addListener(this.cleanBackupsBtn, 'click', () => this.cleanBackups());
+        addListener(this.manageBackupsBtn, 'click', () => this.openBackupsModal());
         
         // Settings changes
         addListener(this.scanDepthInput, 'change', () => this.saveSettings());
@@ -538,6 +542,110 @@ class DoViConvertApp {
             }
         } catch (error) {
             this.appendToTerminal(`❌ Failed to clean backups: ${error.message}\n`, 'error');
+        }
+    }
+    
+    async openBackupsModal() {
+        if (this.backupsModal) {
+            this.backupsModal.classList.add('active');
+            await this.loadBackupsList();
+        }
+    }
+    
+    closeBackupsModal() {
+        if (this.backupsModal) {
+            this.backupsModal.classList.remove('active');
+        }
+    }
+    
+    async loadBackupsList() {
+        if (!this.backupList) return;
+        
+        this.backupList.innerHTML = '<div class="loading-backups">Loading backups...</div>';
+        
+        try {
+            const response = await fetch('/api/backups');
+            const data = await response.json();
+            
+            if (data.backups && data.backups.length > 0) {
+                this.backupList.innerHTML = data.backups.map(backup => {
+                    const size = this.formatSize(backup.size);
+                    const date = new Date(backup.modified * 1000).toLocaleDateString();
+                    const dirParts = backup.directory.split('/');
+                    const shortDir = dirParts.slice(-2).join('/');
+                    
+                    return `
+                        <div class="backup-item" data-path="${backup.backup_path}">
+                            <div class="backup-item-info">
+                                <div class="backup-item-name" title="${backup.original_name}">${backup.original_name}</div>
+                                <div class="backup-item-details">${size} • ${date} ${backup.converted_exists ? '• Converted version exists' : ''}</div>
+                                <div class="backup-item-path" title="${backup.directory}">📁 ${shortDir}</div>
+                            </div>
+                            <div class="backup-item-actions">
+                                <button class="btn btn-small btn-restore" onclick="app.restoreBackup('${backup.backup_path.replace(/'/g, "\\'")}', '${backup.original_name.replace(/'/g, "\\'")}')">
+                                    ↩️ Restore
+                                </button>
+                                <button class="btn btn-small btn-delete-single" onclick="app.deleteBackup('${backup.backup_path.replace(/'/g, "\\'")}', '${backup.original_name.replace(/'/g, "\\'")}')">
+                                    🗑️
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                this.backupList.innerHTML = '<div class="no-backups">No backup files found.</div>';
+            }
+        } catch (error) {
+            this.backupList.innerHTML = `<div class="no-backups">Error loading backups: ${error.message}</div>`;
+        }
+    }
+    
+    async restoreBackup(backupPath, originalName) {
+        if (!confirm(`Restore "${originalName}"? This will replace the converted file with the original Profile 7 version.`)) return;
+        
+        try {
+            const response = await fetch('/api/backups/restore', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ backup_path: backupPath })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                this.showPopup(`Restored: ${result.restored}`, 'success');
+                this.appendToTerminal(`🔄 Restored backup: ${result.restored}\n`, 'system');
+                await this.loadBackupsList();
+                this.loadStats();
+                this.loadCachedResults();
+            } else {
+                const error = await response.json();
+                this.showPopup(`Failed to restore: ${error.detail}`, 'error');
+            }
+        } catch (error) {
+            this.showPopup(`Error: ${error.message}`, 'error');
+        }
+    }
+    
+    async deleteBackup(backupPath, originalName) {
+        if (!confirm(`Delete backup for "${originalName}"? This cannot be undone.`)) return;
+        
+        try {
+            const response = await fetch('/api/backups/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ backup_path: backupPath })
+            });
+            
+            if (response.ok) {
+                this.showPopup('Backup deleted', 'success');
+                await this.loadBackupsList();
+                this.loadStats();
+            } else {
+                const error = await response.json();
+                this.showPopup(`Failed to delete: ${error.detail}`, 'error');
+            }
+        } catch (error) {
+            this.showPopup(`Error: ${error.message}`, 'error');
         }
     }
     

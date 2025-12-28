@@ -1411,6 +1411,119 @@ body::before {
     flex-shrink: 0;
 }
 
+/* Large modal variant */
+.modal-content.modal-large {
+    max-width: 700px;
+}
+
+/* Backup Management Styles */
+.backup-actions {
+    display: flex;
+    gap: var(--space-sm);
+    margin-top: var(--space-sm);
+}
+
+.backup-modal-info {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-bottom: var(--space-md);
+    padding: var(--space-sm);
+    background: rgba(124, 93, 250, 0.1);
+    border-radius: var(--radius-sm);
+    border-left: 3px solid var(--accent-primary);
+}
+
+.backup-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.loading-backups {
+    text-align: center;
+    color: var(--text-muted);
+    padding: var(--space-xl);
+}
+
+.no-backups {
+    text-align: center;
+    color: var(--text-muted);
+    padding: var(--space-xl);
+}
+
+.backup-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-md);
+    background: var(--surface-1);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+}
+
+.backup-item:hover {
+    border-color: var(--accent-primary);
+    background: var(--surface-2);
+}
+
+.backup-item-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.backup-item-name {
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.backup-item-details {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.backup-item-path {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.backup-item-actions {
+    display: flex;
+    gap: var(--space-sm);
+    flex-shrink: 0;
+    margin-left: var(--space-md);
+}
+
+.btn-restore {
+    background: rgba(0, 212, 170, 0.2);
+    color: var(--accent-secondary);
+    border: 1px solid rgba(0, 212, 170, 0.3);
+}
+
+.btn-restore:hover {
+    background: rgba(0, 212, 170, 0.3);
+}
+
+.btn-delete-single {
+    background: rgba(239, 68, 68, 0.2);
+    color: var(--accent-danger);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.btn-delete-single:hover {
+    background: rgba(239, 68, 68, 0.3);
+}
+
 .modal-footer {
     display: flex;
     justify-content: flex-end;

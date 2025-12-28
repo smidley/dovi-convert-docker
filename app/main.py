@@ -355,25 +355,145 @@ async def get_cached_results():
     }
 
 
+@app.get("/api/backups")
+async def list_backups():
+    """List all backup files that can be restored."""
+    scan_path = state.settings.get("scan_path", MEDIA_PATH)
+    backups = []
+    
+    # Backup file patterns from dovi_convert
+    backup_patterns = ('.bak.dovi_convert', '.mkv.bak', '.bak', '.backup', '.original')
+    
+    try:
+        for root, _, files in os.walk(scan_path):
+            for f in files:
+                if any(f.endswith(ext) for ext in backup_patterns):
+                    filepath = os.path.join(root, f)
+                    try:
+                        stat = os.stat(filepath)
+                        
+                        # Determine what the original filename would be
+                        original_name = f
+                        for ext in backup_patterns:
+                            if f.endswith(ext):
+                                original_name = f[:-len(ext)]
+                                if not original_name.endswith('.mkv'):
+                                    original_name += '.mkv'
+                                break
+                        
+                        original_path = os.path.join(root, original_name)
+                        converted_exists = os.path.exists(original_path)
+                        
+                        backups.append({
+                            "backup_path": filepath,
+                            "backup_name": f,
+                            "original_name": original_name,
+                            "original_path": original_path,
+                            "converted_exists": converted_exists,
+                            "size": stat.st_size,
+                            "modified": stat.st_mtime,
+                            "directory": root
+                        })
+                    except:
+                        pass
+    except Exception as e:
+        logger.error(f"Error listing backups: {e}")
+    
+    # Sort by modification time, newest first
+    backups.sort(key=lambda x: x.get("modified", 0), reverse=True)
+    
+    return {"backups": backups, "total": len(backups)}
+
+
+class RestoreRequest(BaseModel):
+    backup_path: str
+
+
+@app.post("/api/backups/restore")
+async def restore_backup(request: RestoreRequest):
+    """Restore a backup file, replacing the converted version."""
+    backup_path = request.backup_path
+    
+    if not os.path.exists(backup_path):
+        raise HTTPException(status_code=404, detail="Backup file not found")
+    
+    # Determine original filename
+    backup_patterns = ('.bak.dovi_convert', '.mkv.bak', '.bak', '.backup', '.original')
+    original_name = os.path.basename(backup_path)
+    
+    for ext in backup_patterns:
+        if original_name.endswith(ext):
+            original_name = original_name[:-len(ext)]
+            if not original_name.endswith('.mkv'):
+                original_name += '.mkv'
+            break
+    
+    original_path = os.path.join(os.path.dirname(backup_path), original_name)
+    
+    try:
+        # If converted file exists, remove it first
+        if os.path.exists(original_path):
+            logger.info(f"Removing converted file: {original_path}")
+            os.remove(original_path)
+        
+        # Rename backup to original
+        logger.info(f"Restoring backup: {backup_path} -> {original_path}")
+        os.rename(backup_path, original_path)
+        
+        # Update cache - mark as profile7 again
+        if original_path in state.scan_cache.get("files", {}):
+            state.scan_cache["files"][original_path]["profile"] = "profile7"
+            state.save_scan_cache()
+        
+        return {
+            "success": True,
+            "restored": original_name,
+            "backup_removed": backup_path
+        }
+    except Exception as e:
+        logger.error(f"Error restoring backup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/backups/delete")
+async def delete_single_backup(request: RestoreRequest):
+    """Delete a single backup file."""
+    backup_path = request.backup_path
+    
+    if not os.path.exists(backup_path):
+        raise HTTPException(status_code=404, detail="Backup file not found")
+    
+    try:
+        size = os.path.getsize(backup_path)
+        os.remove(backup_path)
+        logger.info(f"Deleted backup: {backup_path}")
+        return {"success": True, "freed": size}
+    except Exception as e:
+        logger.error(f"Error deleting backup: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/backups/clean")
 async def clean_backups():
     """Delete all backup files."""
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     deleted = 0
     freed = 0
+    backup_patterns = ('.bak.dovi_convert', '.mkv.bak', '.bak', '.backup', '.original')
     
     try:
         for root, _, files in os.walk(scan_path):
             for f in files:
-                if f.endswith(('.bak', '.backup', '.original')):
+                if any(f.endswith(ext) for ext in backup_patterns):
                     filepath = os.path.join(root, f)
                     try:
                         size = os.path.getsize(filepath)
                         os.remove(filepath)
                         deleted += 1
                         freed += size
-                    except:
-                        pass
+                        logger.info(f"Deleted backup: {filepath}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete {filepath}: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
