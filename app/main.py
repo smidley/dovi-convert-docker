@@ -1309,6 +1309,13 @@ async def run_convert(files: List[str] = None):
                 # Check if file exists, try to remap path if not
                 actual_filepath = filepath
                 
+                # Helper to normalize ligatures in paths
+                def normalize_ligatures(text):
+                    ligatures = {'æ': 'ae', 'Æ': 'Ae', 'œ': 'oe', 'Œ': 'Oe', 'ß': 'ss'}
+                    for lig, replacement in ligatures.items():
+                        text = text.replace(lig, replacement)
+                    return text
+                
                 # Try path case correction first (e.g., /movies -> /Movies)
                 if not Path(filepath).exists():
                     # Check if it's just a case mismatch in the path prefix
@@ -1321,6 +1328,12 @@ async def run_convert(files: List[str] = None):
                         if Path(corrected_path).exists():
                             actual_filepath = corrected_path
                             filepath = corrected_path
+                        else:
+                            # Also try with ligature normalization
+                            corrected_path_normalized = normalize_ligatures(corrected_path)
+                            if Path(corrected_path_normalized).exists():
+                                actual_filepath = corrected_path_normalized
+                                filepath = corrected_path_normalized
                 
                 if not Path(actual_filepath).exists():
                     # Try to find the file by searching in scan_path
@@ -1332,6 +1345,16 @@ async def run_convert(files: List[str] = None):
                     def normalize_name(name):
                         # Normalize Unicode and lowercase for comparison
                         normalized = unicodedata.normalize('NFKD', name)
+                        # Handle common ligatures that don't decompose
+                        ligatures = {
+                            'æ': 'ae', 'Æ': 'ae',
+                            'œ': 'oe', 'Œ': 'oe',
+                            'ß': 'ss',
+                            'ﬁ': 'fi', 'ﬂ': 'fl',
+                            'ĳ': 'ij', 'Ĳ': 'ij',
+                        }
+                        for lig, replacement in ligatures.items():
+                            normalized = normalized.replace(lig, replacement)
                         return normalized.lower()
                     
                     target_normalized = normalize_name(filename)
