@@ -353,17 +353,10 @@
                             <span class="tooltip" title="Extract video to disk before converting (creates backup)">?</span>
                         </div>
                         
-                        <div class="setting-item" id="tempPathContainer">
-                            <label for="tempPath">Temp Storage</label>
-                            <div class="input-with-button">
-                                <input type="text" id="tempPath" placeholder="Same as source (default)">
-                                <button class="btn btn-secondary btn-small" id="browseTempPath">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                                    </svg>
-                                </button>
-                            </div>
-                            <span class="tooltip" title="Fast storage (SSD) for temp files during conversion. Leave empty to use source directory.">?</span>
+                        <div class="setting-item checkbox">
+                            <input type="checkbox" id="useTempStorage">
+                            <label for="useTempStorage">Use Temp Storage</label>
+                            <span class="tooltip" title="Copy files to /temp_storage before converting for faster I/O on HDD. Requires mounting a fast drive (SSD/cache) to /temp_storage in Docker.">?</span>
                         </div>
                         
                         <div class="setting-item checkbox">

@@ -87,7 +87,7 @@ class AppState:
             "safe_mode": False,
             "include_simple_fel": False,
             "scan_depth": 5,
-            "temp_path": "",  # Empty = use same directory as source file
+            "use_temp_storage": False,  # Use /temp_storage mount for faster conversion
             "include_movies": True,
             "include_tv_shows": True,
             "jellyfin_url": "",
@@ -156,7 +156,7 @@ class SettingsUpdate(BaseModel):
     safe_mode: Optional[bool] = None
     include_simple_fel: Optional[bool] = None
     scan_depth: Optional[int] = None
-    temp_path: Optional[str] = None
+    use_temp_storage: Optional[bool] = None
     include_movies: Optional[bool] = None
     include_tv_shows: Optional[bool] = None
     jellyfin_url: Optional[str] = None
@@ -253,8 +253,8 @@ async def update_settings(settings: SettingsUpdate):
         state.settings["include_simple_fel"] = settings.include_simple_fel
     if settings.scan_depth is not None:
         state.settings["scan_depth"] = max(1, min(10, settings.scan_depth))
-    if settings.temp_path is not None:
-        state.settings["temp_path"] = settings.temp_path
+    if settings.use_temp_storage is not None:
+        state.settings["use_temp_storage"] = settings.use_temp_storage
     if settings.include_movies is not None:
         state.settings["include_movies"] = settings.include_movies
     if settings.include_tv_shows is not None:
@@ -1407,15 +1407,28 @@ async def run_convert(files: List[str] = None):
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     safe_mode = state.settings.get("safe_mode", False)
     include_simple = state.settings.get("include_simple_fel", False)
-    temp_path = state.settings.get("temp_path", "")
-    use_temp_storage = temp_path and os.path.isdir(temp_path) and safe_mode
     
-    logger.info(f"Conversion settings - safe_mode: {safe_mode}, include_simple: {include_simple}, temp_path: {temp_path}")
+    # Fixed temp storage path - must be mounted by user in Docker/Unraid
+    TEMP_STORAGE_PATH = "/temp_storage"
+    use_temp_storage_setting = state.settings.get("use_temp_storage", False)
+    temp_storage_available = os.path.isdir(TEMP_STORAGE_PATH) and os.path.ismount(TEMP_STORAGE_PATH)
+    use_temp_storage = use_temp_storage_setting and temp_storage_available and safe_mode
+    temp_path = TEMP_STORAGE_PATH if use_temp_storage else ""
+    
+    logger.info(f"Conversion settings - safe_mode: {safe_mode}, include_simple: {include_simple}, use_temp_storage: {use_temp_storage_setting}, temp_available: {temp_storage_available}")
     
     conversion_results = []  # Track success/failure for each file
     final_status = "complete"  # Track overall status for progress bar
     
     try:
+        # Warn if temp storage is enabled but not available
+        if use_temp_storage_setting and not temp_storage_available:
+            await broadcast_message({"type": "output", "data": f"⚠️ Temp storage enabled but /temp_storage is not mounted!\n"})
+            await broadcast_message({"type": "output", "data": f"💡 Add a path mapping in Docker/Unraid: Host Path → /temp_storage\n"})
+            await broadcast_message({"type": "output", "data": f"📍 Converting in place (slower on HDD)\n\n"})
+        elif use_temp_storage:
+            await broadcast_message({"type": "output", "data": f"💾 Using temp storage at {TEMP_STORAGE_PATH} for faster conversion\n\n"})
+        
         if files:
             # Convert specific files
             total = len(files)
@@ -1823,10 +1836,12 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         # Multiple 'y' answers in case there are multiple prompts
         full_cmd = f"echo 'y\ny\ny' | {cmd_str}"
         
-        # Set up environment with custom temp path if configured
+        # Set up environment with temp storage path if configured and available
         env = os.environ.copy()
-        temp_path = state.settings.get("temp_path", "")
-        if temp_path and os.path.isdir(temp_path):
+        TEMP_STORAGE_PATH = "/temp_storage"
+        use_temp = state.settings.get("use_temp_storage", False)
+        if use_temp and os.path.isdir(TEMP_STORAGE_PATH) and os.path.ismount(TEMP_STORAGE_PATH):
+            temp_path = TEMP_STORAGE_PATH
             env["TMPDIR"] = temp_path
             env["TEMP"] = temp_path
             env["TMP"] = temp_path

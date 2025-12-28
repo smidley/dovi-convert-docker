@@ -79,8 +79,7 @@ class DoViConvertApp {
         this.scanPathInput = getEl('scanPath');
         this.scanDepthInput = getEl('scanDepth');
         this.safeModeCheckbox = getEl('safeMode');
-        this.tempPathInput = getEl('tempPath');
-        this.browseTempPathBtn = getEl('browseTempPath');
+        this.useTempStorageCheckbox = getEl('useTempStorage');
         this.includeSimpleCheckbox = getEl('includeSimple');
         this.autoCleanupCheckbox = getEl('autoCleanup');
         this.includeMoviesCheckbox = getEl('includeMovies');
@@ -161,8 +160,7 @@ class DoViConvertApp {
         // Settings changes
         addListener(this.scanDepthInput, 'change', () => this.saveSettings());
         addListener(this.safeModeCheckbox, 'change', () => this.saveSettings());
-        addListener(this.tempPathInput, 'change', () => this.saveSettings());
-        addListener(this.browseTempPathBtn, 'click', () => this.openBrowser('temp'));
+        addListener(this.useTempStorageCheckbox, 'change', () => this.saveSettings());
         addListener(this.includeSimpleCheckbox, 'change', () => this.saveSettings());
         addListener(this.autoCleanupCheckbox, 'change', () => this.saveSettings());
         addListener(this.includeMoviesCheckbox, 'change', () => this.saveSettings());
@@ -1314,7 +1312,7 @@ class DoViConvertApp {
             this.scanDepthInput.value = settings.scan_depth;
         }
         if (this.safeModeCheckbox) this.safeModeCheckbox.checked = settings.safe_mode ?? false;
-        if (this.tempPathInput) this.tempPathInput.value = settings.temp_path || '';
+        if (this.useTempStorageCheckbox) this.useTempStorageCheckbox.checked = settings.use_temp_storage ?? false;
         if (this.includeSimpleCheckbox) this.includeSimpleCheckbox.checked = settings.include_simple_fel ?? false;
         if (this.autoCleanupCheckbox) this.autoCleanupCheckbox.checked = settings.auto_cleanup ?? false;
         if (this.includeMoviesCheckbox) this.includeMoviesCheckbox.checked = settings.include_movies ?? true;
@@ -1345,7 +1343,7 @@ class DoViConvertApp {
             scan_path: this.scanPathInput?.value,
             scan_depth: parseInt(this.scanDepthInput?.value, 10) || 5,
             safe_mode: this.safeModeCheckbox?.checked ?? false,
-            temp_path: this.tempPathInput?.value || '',
+            use_temp_storage: this.useTempStorageCheckbox?.checked ?? false,
             include_simple_fel: this.includeSimpleCheckbox?.checked ?? false,
             auto_cleanup: this.autoCleanupCheckbox?.checked ?? false,
             include_movies: this.includeMoviesCheckbox?.checked ?? true,
@@ -1655,14 +1653,9 @@ class DoViConvertApp {
     }
 
     async openBrowser(mode = 'scan') {
-        this.browserMode = mode;  // 'scan' or 'temp'
+        this.browserMode = mode;
         this.modal?.classList.add('active');
-        
-        // Start from appropriate path
-        const startPath = mode === 'temp' 
-            ? (this.tempPathInput?.value || '/config')
-            : this.currentPath;
-        await this.loadDirectory(startPath);
+        await this.loadDirectory(this.currentPath);
     }
 
     closeModal() {
@@ -1711,11 +1704,7 @@ class DoViConvertApp {
     }
     
     selectDirectory() {
-        if (this.browserMode === 'temp') {
-            if (this.tempPathInput) this.tempPathInput.value = this.currentPath;
-        } else {
-            if (this.scanPathInput) this.scanPathInput.value = this.currentPath;
-        }
+        if (this.scanPathInput) this.scanPathInput.value = this.currentPath;
         this.saveSettings();
         this.closeModal();
     }

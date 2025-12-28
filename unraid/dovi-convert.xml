@@ -22,7 +22,9 @@ Features:&#xD;
 - Backup restore functionality&#xD;
 - Real-time progress and ETA&#xD;
 &#xD;
-IMPORTANT: If using Jellyfin integration, the container paths below MUST match the paths Jellyfin uses. Check your Jellyfin container's path mappings.&#xD;
+IMPORTANT: If using Jellyfin integration, the Movies/TV container paths MUST match the paths Jellyfin uses. Check your Jellyfin container path mappings.&#xD;
+&#xD;
+TEMP STORAGE: For faster conversion on HDD, mount an SSD path for temp storage. The temp directory needs enough free space for your largest file (50-80GB for 4K remuxes).&#xD;
 &#xD;
 Based on the dovi_convert script by cryptochrome.</Overview>
   <Category>MediaApp:Video Tools:</Category>
@@ -32,6 +34,6 @@ Based on the dovi_convert script by cryptochrome.</Overview>
   <Config Name="Movies" Target="/movies" Default="/mnt/user/data/media/movies" Mode="rw" Description="Path to your Movies library. MUST match the container path used in Jellyfin (e.g., /movies)" Type="Path" Display="always" Required="true" Mask="false"/>
   <Config Name="TV Shows" Target="/tv" Default="/mnt/user/data/media/tv" Mode="rw" Description="Path to your TV Shows library. MUST match the container path used in Jellyfin (e.g., /tv)" Type="Path" Display="always" Required="false" Mask="false"/>
   <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/dovi-convert" Mode="rw" Description="Path for persistent configuration and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dovi-convert</Config>
-  <Config Name="Temp Storage" Target="/tmp" Default="" Mode="rw" Description="Optional: Fast storage (SSD/NVMe) for temp files during conversion. Significantly improves speed on HDD storage. Leave empty to use source directory." Type="Path" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Temp Storage" Target="/temp_storage" Default="/mnt/cache/temp/dovi-convert" Mode="rw" Description="Fast storage (SSD/Cache) for temp files during conversion. Needs 60-80GB free space for large 4K files. Using cache drive significantly speeds up conversion on HDD storage." Type="Path" Display="always" Required="false" Mask="false"/>
   <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Timezone for scheduled scans" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
 </Container>
