@@ -1322,9 +1322,12 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
         buffer = ""
         last_progress_update = 0
         
+        current_step_num = 0
+        total_steps = 3  # dovi_convert typically has 3 steps: Extract, Convert, Remux
+        
         async def process_line(text):
             """Process a single line of output"""
-            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update
+            nonlocal saw_error, saw_success, current_step, file_percent, last_progress_update, current_step_num
             
             output_lines.append(text)
             await broadcast_message({"type": "output", "data": text})
@@ -1338,18 +1341,35 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
             if re.search(r'successfully|completed|done|finished|✓|SUCCESS', text, re.IGNORECASE):
                 saw_success = True
             
-            # Parse step from output
+            # Parse step number from output like "[1/3] Extracting..."
+            step_match = re.search(r'\[(\d+)/(\d+)\]', text)
+            if step_match:
+                current_step_num = int(step_match.group(1))
+                total_steps_parsed = int(step_match.group(2))
+                if total_steps_parsed > 0:
+                    # Estimate file progress based on step (each step is ~equal time for extraction-heavy jobs)
+                    # Step 1 = 0-33%, Step 2 = 33-66%, Step 3 = 66-100%
+                    base_percent = ((current_step_num - 1) / total_steps_parsed) * 100
+                    file_percent = int(base_percent)
+            
+            # Parse step name from output
             for pattern, step_name in step_patterns:
                 if re.search(pattern, text, re.IGNORECASE):
                     current_step = step_name
                     break
             
-            # Parse percentage from output (also check for carriage return progress)
-            # dovi_convert uses \r for progress updates on same line
+            # Parse explicit percentage from output if available
             percent_match = percent_pattern.search(text)
             if percent_match:
                 try:
-                    file_percent = min(99, int(float(percent_match.group(1))))
+                    explicit_percent = int(float(percent_match.group(1)))
+                    # If we have step info, add percentage within step
+                    if current_step_num > 0:
+                        base_percent = ((current_step_num - 1) / total_steps) * 100
+                        step_range = 100 / total_steps
+                        file_percent = int(base_percent + (explicit_percent / 100 * step_range))
+                    else:
+                        file_percent = min(99, explicit_percent)
                 except:
                     pass
             
@@ -1359,9 +1379,9 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                 last_progress_update = current_time
                 elapsed = current_time - start_time
                 
-                # Calculate ETA based on file progress
+                # Calculate ETA based on step progress
                 eta_str = ""
-                if file_percent > 5 and elapsed > 2:  # Need some progress to estimate
+                if file_percent > 5 and elapsed > 5:  # Need some progress to estimate
                     estimated_total = elapsed / (file_percent / 100)
                     remaining = estimated_total - elapsed
                     if remaining > 0:
@@ -1377,6 +1397,12 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                             eta_str = f"{hours}h {mins}m"
                 
                 overall_percent = round(((file_num - 1) / total_files) * 100 + (file_percent / total_files))
+                
+                # Build step display with step number if available
+                step_display = current_step
+                if current_step_num > 0:
+                    step_display = f"Step {current_step_num}/{total_steps}: {current_step}"
+                
                 await broadcast_message({
                     "type": "progress",
                     "data": {
@@ -1386,7 +1412,7 @@ async def run_convert_command(cmd: list, cwd: str = None, file_num: int = 1, tot
                         "filename": filename,
                         "filepath": cwd,
                         "status": "converting",
-                        "step": current_step,
+                        "step": step_display,
                         "file_percent": file_percent,
                         "eta": eta_str,
                         "elapsed": int(elapsed)
