@@ -14,18 +14,24 @@ Many devices cannot process Dolby Vision Profile 7 files, including Apple TV 4K 
 &#xD;
 Features:&#xD;
 - Web-based interface for easy operation&#xD;
+- Jellyfin integration for library scanning&#xD;
 - Scan directories for Dolby Vision files&#xD;
 - Batch conversion with progress tracking&#xD;
-- Safe mode for problematic files&#xD;
-- Automatic backup creation&#xD;
-- Real-time output streaming&#xD;
+- Safe mode with backup creation&#xD;
+- Optional fast temp storage for HDD users&#xD;
+- Backup restore functionality&#xD;
+- Real-time progress and ETA&#xD;
+&#xD;
+IMPORTANT: If using Jellyfin integration, the container paths below MUST match the paths Jellyfin uses. Check your Jellyfin container's path mappings.&#xD;
 &#xD;
 Based on the dovi_convert script by cryptochrome.</Overview>
   <Category>MediaApp:Video Tools:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <Icon>https://raw.githubusercontent.com/smidley/dovi-convert-docker/main/icon.png</Icon>
   <Config Name="Web UI Port" Target="8080" Default="8080" Mode="tcp" Description="Port for the web interface" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
-  <Config Name="Media Path" Target="/media" Default="" Mode="rw" Description="Path to your media library containing Dolby Vision files" Type="Path" Display="always-hide" Required="true" Mask="false"/>
-  <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/dovi-convert" Mode="rw" Description="Path for persistent configuration" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dovi-convert</Config>
-  <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Timezone" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
+  <Config Name="Movies" Target="/movies" Default="/mnt/user/data/media/movies" Mode="rw" Description="Path to your Movies library. MUST match the container path used in Jellyfin (e.g., /movies)" Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="TV Shows" Target="/tv" Default="/mnt/user/data/media/tv" Mode="rw" Description="Path to your TV Shows library. MUST match the container path used in Jellyfin (e.g., /tv)" Type="Path" Display="always" Required="false" Mask="false"/>
+  <Config Name="Config Path" Target="/config" Default="/mnt/user/appdata/dovi-convert" Mode="rw" Description="Path for persistent configuration and settings" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dovi-convert</Config>
+  <Config Name="Temp Storage" Target="/tmp" Default="" Mode="rw" Description="Optional: Fast storage (SSD/NVMe) for temp files during conversion. Significantly improves speed on HDD storage. Leave empty to use source directory." Type="Path" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="TZ" Target="TZ" Default="America/New_York" Mode="" Description="Timezone for scheduled scans" Type="Variable" Display="always" Required="false" Mask="false">America/New_York</Config>
 </Container>
