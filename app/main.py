@@ -1308,16 +1308,49 @@ async def run_convert(files: List[str] = None):
                 
                 # Check if file exists, try to remap path if not
                 actual_filepath = filepath
+                
+                # Try path case correction first (e.g., /movies -> /Movies)
                 if not Path(filepath).exists():
+                    # Check if it's just a case mismatch in the path prefix
+                    filepath_lower = filepath.lower()
+                    scan_path_lower = scan_path.lower()
+                    
+                    if filepath_lower.startswith(scan_path_lower):
+                        # Replace the prefix with the actual scan_path case
+                        corrected_path = scan_path + filepath[len(scan_path):]
+                        if Path(corrected_path).exists():
+                            actual_filepath = corrected_path
+                            filepath = corrected_path
+                
+                if not Path(actual_filepath).exists():
                     # Try to find the file by searching in scan_path
                     await broadcast_message({"type": "output", "data": f"⚠️ File not found at: {filepath}\n"})
                     await broadcast_message({"type": "output", "data": f"🔍 Searching in {scan_path}...\n"})
                     
-                    # Search for the file by name
+                    # Normalize filename for comparison (handle Unicode like Æ vs Ae)
+                    import unicodedata
+                    def normalize_name(name):
+                        # Normalize Unicode and lowercase for comparison
+                        normalized = unicodedata.normalize('NFKD', name)
+                        return normalized.lower()
+                    
+                    target_normalized = normalize_name(filename)
+                    
+                    # Search for the file by name (with Unicode normalization)
                     found_path = None
                     for root, dirs, files_in_dir in os.walk(scan_path):
+                        # First try exact match
                         if filename in files_in_dir:
                             found_path = os.path.join(root, filename)
+                            break
+                        
+                        # Then try normalized match
+                        for f in files_in_dir:
+                            if normalize_name(f) == target_normalized:
+                                found_path = os.path.join(root, f)
+                                break
+                        
+                        if found_path:
                             break
                     
                     if found_path and Path(found_path).exists():
