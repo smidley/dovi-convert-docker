@@ -1322,18 +1322,35 @@ async def run_convert(files: List[str] = None):
                     filepath_lower = filepath.lower()
                     scan_path_lower = scan_path.lower()
                     
+                    # Try to find a matching prefix (handles /movies vs /Movies)
                     if filepath_lower.startswith(scan_path_lower):
                         # Replace the prefix with the actual scan_path case
                         corrected_path = scan_path + filepath[len(scan_path):]
+                        logger.info(f"Trying case-corrected path: {corrected_path}")
                         if Path(corrected_path).exists():
                             actual_filepath = corrected_path
                             filepath = corrected_path
+                            logger.info(f"Case-corrected path exists!")
                         else:
                             # Also try with ligature normalization
                             corrected_path_normalized = normalize_ligatures(corrected_path)
+                            logger.info(f"Trying ligature-normalized path: {corrected_path_normalized}")
                             if Path(corrected_path_normalized).exists():
                                 actual_filepath = corrected_path_normalized
                                 filepath = corrected_path_normalized
+                                logger.info(f"Ligature-normalized path exists!")
+                    
+                    # Also check if scan_path itself exists
+                    if not Path(scan_path).exists():
+                        logger.warning(f"Scan path does not exist: {scan_path}")
+                        await broadcast_message({"type": "output", "data": f"⚠️ Scan path does not exist: {scan_path}\n"})
+                        # Try common alternatives
+                        for alt_path in ['/media', '/movies', '/Movies', '/mnt/media']:
+                            if Path(alt_path).exists():
+                                logger.info(f"Found alternative path: {alt_path}")
+                                await broadcast_message({"type": "output", "data": f"💡 Found media at: {alt_path}\n"})
+                                scan_path = alt_path
+                                break
                 
                 if not Path(actual_filepath).exists():
                     # Try to find the file by searching in scan_path
