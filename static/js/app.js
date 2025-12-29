@@ -724,19 +724,12 @@ class DoViConvertApp {
             
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws`;
-            
-            if (this.terminalContent) {
-                this.appendToTerminal(`🔌 Connecting to ${wsUrl}...\n`, 'system');
-            }
         
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
                 this.reconnectAttempts = 0;
                 this.setConnectionStatus(true);
-                if (this.terminalContent) {
-                    this.appendToTerminal('🔗 Connected to server\n', 'system');
-                }
                 this.startKeepalive();
                 // Refresh data on reconnect
                 this.checkServerStatus();
@@ -772,10 +765,7 @@ class DoViConvertApp {
         
         this.ws.onerror = (error) => {
             console.error('WebSocket error:', error);
-                if (this.terminalContent) {
-                    this.appendToTerminal('❌ WebSocket connection error\n', 'error');
-                }
-            };
+        };
         } catch (e) {
             console.error('Failed to create WebSocket:', e);
         }
@@ -850,10 +840,10 @@ class DoViConvertApp {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
             const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-            this.appendToTerminal(`🔄 Reconnecting in ${delay/1000}s...\n`, 'system');
             setTimeout(() => this.connectWebSocket(), delay);
         } else {
-            this.appendToTerminal('❌ Failed to reconnect. Please refresh the page.\n', 'error');
+            // Only show message after all reconnect attempts fail
+            this.appendToTerminal('⚠️ Connection lost. Please refresh the page.\n', 'error');
         }
     }
     
@@ -1276,7 +1266,6 @@ class DoViConvertApp {
             const status = await response.json();
             if (status.is_running) {
                 this.updateStatus(true, status.action || 'scan');
-                this.appendToTerminal('🔄 Process still running on server...\n', 'system');
                 
                 // Restore progress if available
                 if (status.progress && Object.keys(status.progress).length > 0) {
@@ -1492,7 +1481,6 @@ class DoViConvertApp {
         this.switchTab('output');
         
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-            this.appendToTerminal('🔌 Reconnecting WebSocket...\n', 'system');
             this.connectWebSocket();
             await new Promise(resolve => setTimeout(resolve, 1000));
         }
