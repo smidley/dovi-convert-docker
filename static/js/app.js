@@ -5,7 +5,6 @@
 
 class DoViConvertApp {
     constructor() {
-        console.log('DoViConvertApp constructor starting...');
         this.ws = null;
         this.isRunning = false;
         this.currentPath = '/media';
@@ -38,27 +37,18 @@ class DoViConvertApp {
         this.notificationsEnabled = false;
         this.requestNotificationPermission();
         
-        console.log('Initializing elements...');
         this.initElements();
-        console.log('Initializing event listeners...');
         this.initEventListeners();
-        console.log('Connecting WebSocket...');
         this.connectWebSocket();
-        console.log('Loading settings...');
         this.loadSettings();
-        console.log('Restoring state...');
         this.restoreState();
-        console.log('Checking server status...');
         this.checkServerStatus();
-        console.log('Loading stats...');
         this.loadStats();
-        console.log('Loading cached results...');
         this.loadCachedResults();
         
         // Refresh when tab becomes visible again
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
-                console.log('Tab visible, refreshing...');
                 this.checkServerStatus();
                 this.loadStats();
                 this.loadCachedResults();
@@ -68,8 +58,6 @@ class DoViConvertApp {
                 }
             }
         });
-        
-        console.log('Constructor complete');
     }
 
     initElements() {
@@ -466,7 +454,6 @@ class DoViConvertApp {
             if (response.ok) {
                 const data = await response.json();
                 if (data.results) {
-                    console.log('Restoring cached results:', data);
                     this.displayResults(data.results);
                     
                     // Update last scan time display if available
@@ -848,7 +835,6 @@ class DoViConvertApp {
                     this.wasRunning = status.is_running;
                 }
             } catch (e) {
-                console.log('Polling failed:', e);
             }
         }, 3000);
     }
@@ -884,7 +870,6 @@ class DoViConvertApp {
                 this.addLogMarker(data.data.id, data.data.filename);
                 break;
             case 'results':
-                console.log('Received results via WebSocket:', data.data);
                 this.displayResults(data.data);
                 this.loadStats();
                 // Show notification that results were received
@@ -1603,7 +1588,6 @@ class DoViConvertApp {
     }
     
     scrollToLog(logId) {
-        console.log('scrollToLog called with logId:', logId);
         
         if (!logId) {
             this.showPopup('No log ID available for this history entry', 'warning');
@@ -1617,7 +1601,6 @@ class DoViConvertApp {
         setTimeout(() => {
             // Find the marker
             const marker = document.getElementById(`log-${logId}`);
-            console.log('Looking for marker:', `log-${logId}`, 'Found:', !!marker);
             
             if (marker) {
                 // Scroll to marker
