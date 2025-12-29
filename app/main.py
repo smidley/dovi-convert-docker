@@ -916,7 +916,7 @@ async def refresh_jellyfin_item(filepath: str):
 
 
 async def run_jellyfin_scan():
-    """Scan Jellyfin library for Dolby Vision files."""
+    """Scan Jellyfin library for Dolby Vision files using two-phase approach."""
     state.is_running = True
     state.scan_cancelled = False
     
@@ -927,7 +927,7 @@ async def run_jellyfin_scan():
     api_key = state.settings.get("jellyfin_api_key", "")
     
     await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
-    await broadcast_message({"type": "output", "data": "🔍 JELLYFIN LIBRARY SCAN (Instant)\n"})
+    await broadcast_message({"type": "output", "data": "🔍 JELLYFIN LIBRARY SCAN (Two-Phase)\n"})
     await broadcast_message({"type": "output", "data": f"{'='*60}\n\n"})
     await broadcast_message({"type": "output", "data": f"🌐 Server: {url}\n\n"})
     
@@ -979,7 +979,13 @@ async def run_jellyfin_scan():
             
             total_items = len(items)
             await broadcast_message({"type": "output", "data": f"📂 Found {total_items} items\n\n"})
-            await broadcast_message({"type": "output", "data": "🎬 Analyzing HDR formats...\n\n"})
+            
+            # ============================================
+            # PHASE 1: Quick scan using Jellyfin metadata
+            # ============================================
+            await broadcast_message({"type": "output", "data": "📋 PHASE 1: Quick metadata scan...\n"})
+            
+            needs_deep_scan = []  # Files that need dovi_tool analysis
             
             for i, item in enumerate(items, 1):
                 if state.scan_cancelled:
@@ -991,9 +997,10 @@ async def run_jellyfin_scan():
                     "data": {
                         "current": i,
                         "total": total_items,
-                        "percent": round((i / total_items) * 100),
+                        "percent": round((i / total_items) * 50),  # Phase 1 is 0-50%
                         "filename": item.get("Name", "Unknown"),
-                        "status": "scanning"
+                        "status": "scanning",
+                        "step": "Phase 1: Quick scan"
                     }
                 })
                 
@@ -1049,25 +1056,27 @@ async def run_jellyfin_scan():
                         dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
                         
                         if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
-                            # Two-phase FEL detection: quick check from Jellyfin info, deep scan if needed
+                            # Quick FEL check from metadata
                             hdr_info_str = str(dovi_title) + " " + str(hdr_format)
-                            fel_type = "unknown"
+                            quick_fel = detect_fel_from_mediainfo(hdr_info_str)
                             
-                            if Path(file_path).exists():
-                                fel_type = await detect_fel_type(file_path, hdr_info_str)
-                            else:
-                                # File not accessible - use quick detection only
-                                fel_type = detect_fel_from_mediainfo(hdr_info_str)
-                                if fel_type == 'needs_deep_scan':
-                                    fel_type = 'unknown'
-                            
-                            dv_profile7_files.append({
+                            file_entry = {
                                 **media_info,
                                 "hdr": "Dolby Vision Profile 7",
                                 "profile": dovi_title,
-                                "fel_type": fel_type
-                            })
-                            state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0, "fel_type": fel_type}
+                                "hdr_info_str": hdr_info_str  # Save for potential deep scan
+                            }
+                            
+                            if quick_fel in ('MEL', 'FEL'):
+                                # Quick detection succeeded - add to results immediately
+                                file_entry["fel_type"] = quick_fel
+                                dv_profile7_files.append(file_entry)
+                                state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0, "fel_type": quick_fel}
+                                FelScanStats.quick_detections += 1
+                            else:
+                                # Needs deep scan - tag for Phase 2
+                                file_entry["fel_type"] = "pending"
+                                needs_deep_scan.append(file_entry)
                         else:
                             dv_profile8_files.append({
                                 **media_info,
@@ -1081,6 +1090,58 @@ async def run_jellyfin_scan():
                     else:
                         sdr_count += 1
                         state.scan_cache["files"][file_path] = {"profile": "sdr", "mtime": 0}
+            
+            await broadcast_message({"type": "output", "data": f"✅ Phase 1 complete: {len(dv_profile7_files)} identified, {len(needs_deep_scan)} need deep scan\n\n"})
+            
+            # ============================================
+            # PHASE 2: Deep scan files that need dovi_tool
+            # ============================================
+            if needs_deep_scan and not state.scan_cancelled:
+                await broadcast_message({"type": "output", "data": f"🔬 PHASE 2: Deep scanning {len(needs_deep_scan)} files...\n"})
+                await broadcast_message({"type": "output", "data": "   (Extracting HEVC tracks for dovi_tool analysis)\n\n"})
+                
+                for i, file_entry in enumerate(needs_deep_scan, 1):
+                    if state.scan_cancelled:
+                        await broadcast_message({"type": "output", "data": "\n⚠️ Scan cancelled\n"})
+                        break
+                    
+                    file_path = file_entry["path"]
+                    file_name = file_entry["name"]
+                    
+                    await broadcast_message({
+                        "type": "progress",
+                        "data": {
+                            "current": i,
+                            "total": len(needs_deep_scan),
+                            "percent": 50 + round((i / len(needs_deep_scan)) * 50),  # Phase 2 is 50-100%
+                            "filename": file_name,
+                            "status": "scanning",
+                            "step": f"Phase 2: Deep scan ({i}/{len(needs_deep_scan)})"
+                        }
+                    })
+                    
+                    await broadcast_message({"type": "output", "data": f"  🔬 Analyzing: {file_name}...\n"})
+                    
+                    # Deep scan using dovi_tool
+                    if Path(file_path).exists():
+                        fel_type = await detect_fel_type_deep(file_path)
+                        FelScanStats.deep_scans += 1
+                    else:
+                        fel_type = "unknown"
+                        await broadcast_message({"type": "output", "data": f"     ⚠️ File not accessible\n"})
+                    
+                    file_entry["fel_type"] = fel_type
+                    if "hdr_info_str" in file_entry:
+                        del file_entry["hdr_info_str"]  # Clean up temp field
+                    
+                    # Add to results
+                    dv_profile7_files.append(file_entry)
+                    state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0, "fel_type": fel_type}
+                    
+                    fel_indicator = "✅ MEL" if fel_type == "MEL" else "⚠️ FEL" if fel_type == "FEL" else "❓ unknown"
+                    await broadcast_message({"type": "output", "data": f"     → {fel_indicator}\n"})
+                
+                await broadcast_message({"type": "output", "data": f"\n✅ Phase 2 complete\n"})
             
             state.scan_cache["last_scan"] = datetime.now().isoformat()
             state.save_scan_cache()
@@ -1359,8 +1420,7 @@ async def run_scan(incremental: bool = True):
         await broadcast_message({"type": "output", "data": f"📂 Found {len(mkv_files)} MKV files\n"})
         if skipped > 0:
             await broadcast_message({"type": "output", "data": f"⏭️ Skipping {skipped} unchanged files\n"})
-        await broadcast_message({"type": "output", "data": f"📝 Scanning {len(files_to_scan)} files...\n"})
-        await broadcast_message({"type": "output", "data": f"💡 Using two-phase FEL detection (quick + deep scan if needed)\n\n"})
+        await broadcast_message({"type": "output", "data": f"📝 Scanning {len(files_to_scan)} files...\n\n"})
         
         if not files_to_scan and skipped > 0:
             await broadcast_message({"type": "output", "data": "✅ All files cached, no new scans needed\n"})
@@ -1369,6 +1429,7 @@ async def run_scan(incremental: bool = True):
         dv_profile8_files = []
         hdr10_count = 0
         sdr_count = 0
+        needs_deep_scan = []  # Files that need dovi_tool analysis
         
         # Load existing cache results for skipped files
         for filepath in mkv_files:
@@ -1380,6 +1441,7 @@ async def run_scan(incremental: bool = True):
                             "path": filepath,
                             "name": Path(filepath).name,
                             "hdr": "Dolby Vision Profile 7",
+                            "fel_type": cached.get("fel_type", "unknown"),
                             "cached": True
                         })
                     elif cached.get("profile") == "profile8":
@@ -1394,7 +1456,12 @@ async def run_scan(incremental: bool = True):
                     elif cached.get("profile") == "sdr":
                         sdr_count += 1
         
-        # Scan new/changed files
+        # ============================================
+        # PHASE 1: Quick scan using mediainfo
+        # ============================================
+        if files_to_scan:
+            await broadcast_message({"type": "output", "data": "📋 PHASE 1: Quick metadata scan...\n"})
+        
         for i, (filepath, mtime) in enumerate(files_to_scan, 1):
             if state.scan_cancelled:
                 await broadcast_message({"type": "output", "data": "\n⚠️ Scan cancelled\n"})
@@ -1407,9 +1474,10 @@ async def run_scan(incremental: bool = True):
                 "data": {
                     "current": i + skipped,
                     "total": len(mkv_files),
-                    "percent": round(((i + skipped) / len(mkv_files)) * 100),
+                    "percent": round(((i + skipped) / len(mkv_files)) * 50),  # Phase 1 is 0-50%
                     "filename": filename,
-                    "status": "scanning"
+                    "status": "scanning",
+                    "step": "Phase 1: Quick scan"
                 }
             })
             
@@ -1465,26 +1533,34 @@ async def run_scan(incremental: bool = True):
                     "resolution": resolution,
                     "codec": codec,
                     "bitrate": bitrate_str,
-                    "size": file_size
+                    "size": file_size,
+                    "mtime": mtime
                 }
                 
                 if "Dolby Vision" in full_hdr_info:
                     if "dvhe.07" in full_hdr_info or "Profile 7" in full_hdr_info.replace(" ", ""):
-                        # Two-phase FEL detection: quick mediainfo check, then deep scan if needed
-                        fel_type = await detect_fel_type(filepath, full_hdr_info)
+                        # Quick FEL check from mediainfo
+                        quick_fel = detect_fel_from_mediainfo(full_hdr_info)
                         
                         file_entry = {
                             **media_info,
                             "hdr": full_hdr_info,
-                            "fel_type": fel_type
                         }
                         
-                        dv_profile7_files.append(file_entry)
-                        state.scan_cache["files"][filepath] = {
-                            "profile": "profile7", 
-                            "mtime": mtime,
-                            "fel_type": fel_type
-                        }
+                        if quick_fel in ('MEL', 'FEL'):
+                            # Quick detection succeeded - add to results immediately
+                            file_entry["fel_type"] = quick_fel
+                            dv_profile7_files.append(file_entry)
+                            state.scan_cache["files"][filepath] = {
+                                "profile": "profile7", 
+                                "mtime": mtime,
+                                "fel_type": quick_fel
+                            }
+                            FelScanStats.quick_detections += 1
+                        else:
+                            # Needs deep scan - tag for Phase 2
+                            file_entry["fel_type"] = "pending"
+                            needs_deep_scan.append(file_entry)
                     else:
                         dv_profile8_files.append({
                             **media_info,
@@ -1500,6 +1576,60 @@ async def run_scan(incremental: bool = True):
                     
             except Exception:
                 pass
+        
+        if files_to_scan:
+            await broadcast_message({"type": "output", "data": f"✅ Phase 1 complete: {len(dv_profile7_files)} identified, {len(needs_deep_scan)} need deep scan\n\n"})
+        
+        # ============================================
+        # PHASE 2: Deep scan files that need dovi_tool
+        # ============================================
+        if needs_deep_scan and not state.scan_cancelled:
+            await broadcast_message({"type": "output", "data": f"🔬 PHASE 2: Deep scanning {len(needs_deep_scan)} files...\n"})
+            await broadcast_message({"type": "output", "data": "   (Extracting HEVC tracks for dovi_tool analysis)\n\n"})
+            
+            for i, file_entry in enumerate(needs_deep_scan, 1):
+                if state.scan_cancelled:
+                    await broadcast_message({"type": "output", "data": "\n⚠️ Scan cancelled\n"})
+                    break
+                
+                filepath = file_entry["path"]
+                filename = file_entry["name"]
+                mtime = file_entry.get("mtime", 0)
+                
+                await broadcast_message({
+                    "type": "progress",
+                    "data": {
+                        "current": i,
+                        "total": len(needs_deep_scan),
+                        "percent": 50 + round((i / len(needs_deep_scan)) * 50),  # Phase 2 is 50-100%
+                        "filename": filename,
+                        "status": "scanning",
+                        "step": f"Phase 2: Deep scan ({i}/{len(needs_deep_scan)})"
+                    }
+                })
+                
+                await broadcast_message({"type": "output", "data": f"  🔬 Analyzing: {filename}...\n"})
+                
+                # Deep scan using dovi_tool
+                fel_type = await detect_fel_type_deep(filepath)
+                FelScanStats.deep_scans += 1
+                
+                file_entry["fel_type"] = fel_type
+                if "mtime" in file_entry:
+                    del file_entry["mtime"]  # Clean up temp field
+                
+                # Add to results
+                dv_profile7_files.append(file_entry)
+                state.scan_cache["files"][filepath] = {
+                    "profile": "profile7", 
+                    "mtime": mtime,
+                    "fel_type": fel_type
+                }
+                
+                fel_indicator = "✅ MEL" if fel_type == "MEL" else "⚠️ FEL" if fel_type == "FEL" else "❓ unknown"
+                await broadcast_message({"type": "output", "data": f"     → {fel_indicator}\n"})
+            
+            await broadcast_message({"type": "output", "data": f"\n✅ Phase 2 complete\n"})
         
         state.scan_cache["last_scan"] = datetime.now().isoformat()
         state.save_scan_cache()
