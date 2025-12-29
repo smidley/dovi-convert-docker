@@ -912,11 +912,20 @@ class DoViConvertApp {
             stats.textContent = `${progress.current} / ${progress.total}`;
             if (percent) percent.textContent = `${progress.percent}%`;
             detail.textContent = progress.filename ? `📄 ${progress.filename}` : 'Processing...';
-            label.textContent = 'Scanning files...';
+            label.textContent = progress.step || 'Scanning files...';
             
             if (progress.eta) {
                 detail.textContent += ` (ETA: ${progress.eta})`;
             }
+        } else if (progress.status === 'deep_scanning') {
+            // Deep scan phase - slower, show different styling
+            container.style.display = 'block';
+            fill.classList.remove('indeterminate');
+            fill.style.width = `${progress.percent}%`;
+            stats.textContent = `${progress.current} / ${progress.total}`;
+            if (percent) percent.textContent = `${progress.percent}%`;
+            detail.textContent = progress.filename ? `🔬 ${progress.filename}` : 'Analyzing...';
+            label.textContent = progress.step || '🔬 Deep scanning (analyzing video tracks)...';
         } else if (progress.status === 'converting') {
             container.style.display = 'block';
             fill.classList.remove('indeterminate');

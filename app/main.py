@@ -1060,6 +1060,10 @@ async def run_jellyfin_scan():
                             hdr_info_str = str(dovi_title) + " " + str(hdr_format)
                             quick_fel = detect_fel_from_mediainfo(hdr_info_str)
                             
+                            # Log first few detections to help debug
+                            if len(dv_profile7_files) + len(needs_deep_scan) < 3:
+                                logger.info(f"FEL detection for '{file_name}': hdr_info='{hdr_info_str}' -> {quick_fel}")
+                            
                             file_entry = {
                                 **media_info,
                                 "hdr": "Dolby Vision Profile 7",
@@ -1098,7 +1102,7 @@ async def run_jellyfin_scan():
             # ============================================
             if needs_deep_scan and not state.scan_cancelled:
                 await broadcast_message({"type": "output", "data": f"🔬 PHASE 2: Deep scanning {len(needs_deep_scan)} files...\n"})
-                await broadcast_message({"type": "output", "data": "   (Extracting HEVC tracks for dovi_tool analysis)\n\n"})
+                await broadcast_message({"type": "output", "data": "   (Extracting HEVC tracks for dovi_tool analysis - this takes ~30-60s per file)\n\n"})
                 
                 for i, file_entry in enumerate(needs_deep_scan, 1):
                     if state.scan_cancelled:
@@ -1108,15 +1112,16 @@ async def run_jellyfin_scan():
                     file_path = file_entry["path"]
                     file_name = file_entry["name"]
                     
+                    # For Phase 2, show progress out of deep scan count, not total items
                     await broadcast_message({
                         "type": "progress",
                         "data": {
                             "current": i,
                             "total": len(needs_deep_scan),
-                            "percent": 50 + round((i / len(needs_deep_scan)) * 50),  # Phase 2 is 50-100%
+                            "percent": round((i / len(needs_deep_scan)) * 100),  # 0-100% for deep scan phase
                             "filename": file_name,
-                            "status": "scanning",
-                            "step": f"Phase 2: Deep scan ({i}/{len(needs_deep_scan)})"
+                            "status": "deep_scanning",
+                            "step": f"🔬 Deep scan: {i}/{len(needs_deep_scan)}"
                         }
                     })
                     
@@ -1215,12 +1220,18 @@ async def run_jellyfin_scan():
 
 def detect_fel_from_mediainfo(hdr_info: str) -> str:
     """
-    Quick FEL detection from mediainfo HDR format string.
+    Quick FEL detection from mediainfo/Jellyfin HDR format string.
     Uses the Dolby Vision compatibility ID to determine FEL type.
     
-    Format: dvhe.07.XX where XX is the compatibility ID:
+    Compatibility IDs (last number in profile):
     - 06 = Cross-compatible (MEL) - safe to convert
-    - 01 = FEL - needs deeper analysis
+    - 01 = FEL - quality loss if converted
+    
+    Handles various formats:
+    - dvhe.07.06, dvhe.07.01
+    - Profile 7.06, Profile 7.01
+    - DV Profile 7.6, DV 7.1
+    - Dolby Vision Profile 7 (06), etc.
     
     Returns: 'MEL', 'FEL', or 'needs_deep_scan'
     """
@@ -1228,23 +1239,55 @@ def detect_fel_from_mediainfo(hdr_info: str) -> str:
     
     hdr_lower = hdr_info.lower()
     
-    # Look for dvhe.07.XX pattern
+    # Pattern 1: dvhe.07.XX (standard format)
     match = re.search(r'dvhe\.07\.(\d+)', hdr_lower)
     if match:
         compat_id = match.group(1)
-        if compat_id == '06':
-            return 'MEL'  # Cross-compatible, safe to convert
-        elif compat_id == '01':
-            return 'FEL'  # FEL, will lose quality
-        # Other compatibility IDs need deep scan
+        if compat_id == '06' or compat_id == '6':
+            return 'MEL'
+        elif compat_id == '01' or compat_id == '1':
+            return 'FEL'
     
-    # Check for explicit MEL/FEL mentions
-    if 'mel' in hdr_lower or 'cross-compatible' in hdr_lower:
+    # Pattern 2: Profile 7.XX or Profile 7 (XX) - Jellyfin format
+    match = re.search(r'profile\s*7[.\s]*(\d+)', hdr_lower)
+    if match:
+        compat_id = match.group(1)
+        if compat_id in ('06', '6'):
+            return 'MEL'
+        elif compat_id in ('01', '1'):
+            return 'FEL'
+    
+    # Pattern 3: DV 7.X or DV7.X
+    match = re.search(r'dv\s*7[.\s]*(\d+)', hdr_lower)
+    if match:
+        compat_id = match.group(1)
+        if compat_id in ('06', '6'):
+            return 'MEL'
+        elif compat_id in ('01', '1'):
+            return 'FEL'
+    
+    # Pattern 4: Look for compatibility ID in parentheses like "(06)" or "(6)"
+    match = re.search(r'\(0?([16])\)', hdr_lower)
+    if match:
+        compat_id = match.group(1)
+        if compat_id == '6':
+            return 'MEL'
+        elif compat_id == '1':
+            return 'FEL'
+    
+    # Pattern 5: Explicit MEL/FEL text
+    if 'mel' in hdr_lower or 'cross-compatible' in hdr_lower or 'cross compatible' in hdr_lower:
         return 'MEL'
     if 'fel' in hdr_lower or 'full enhancement' in hdr_lower:
         return 'FEL'
     
-    # Can't determine from mediainfo - needs deep scan
+    # Pattern 6: BL+EL+RPU indicates FEL, BL+RPU indicates MEL
+    if 'bl+el+rpu' in hdr_lower or 'bl + el + rpu' in hdr_lower:
+        return 'FEL'
+    if 'bl+rpu' in hdr_lower or 'bl + rpu' in hdr_lower:
+        return 'MEL'
+    
+    # Can't determine from metadata - needs deep scan
     return 'needs_deep_scan'
 
 
@@ -1585,7 +1628,7 @@ async def run_scan(incremental: bool = True):
         # ============================================
         if needs_deep_scan and not state.scan_cancelled:
             await broadcast_message({"type": "output", "data": f"🔬 PHASE 2: Deep scanning {len(needs_deep_scan)} files...\n"})
-            await broadcast_message({"type": "output", "data": "   (Extracting HEVC tracks for dovi_tool analysis)\n\n"})
+            await broadcast_message({"type": "output", "data": "   (Extracting HEVC tracks for dovi_tool analysis - this takes ~30-60s per file)\n\n"})
             
             for i, file_entry in enumerate(needs_deep_scan, 1):
                 if state.scan_cancelled:
@@ -1596,15 +1639,16 @@ async def run_scan(incremental: bool = True):
                 filename = file_entry["name"]
                 mtime = file_entry.get("mtime", 0)
                 
+                # For Phase 2, show progress out of deep scan count
                 await broadcast_message({
                     "type": "progress",
                     "data": {
                         "current": i,
                         "total": len(needs_deep_scan),
-                        "percent": 50 + round((i / len(needs_deep_scan)) * 50),  # Phase 2 is 50-100%
+                        "percent": round((i / len(needs_deep_scan)) * 100),  # 0-100% for deep scan phase
                         "filename": filename,
-                        "status": "scanning",
-                        "step": f"Phase 2: Deep scan ({i}/{len(needs_deep_scan)})"
+                        "status": "deep_scanning",
+                        "step": f"🔬 Deep scan: {i}/{len(needs_deep_scan)}"
                     }
                 })
                 
