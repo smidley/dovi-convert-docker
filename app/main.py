@@ -920,6 +920,9 @@ async def run_jellyfin_scan():
     state.is_running = True
     state.scan_cancelled = False
     
+    # Reset FEL scan statistics
+    FelScanStats.reset()
+    
     url = state.settings.get("jellyfin_url", "")
     api_key = state.settings.get("jellyfin_api_key", "")
     
@@ -1046,8 +1049,17 @@ async def run_jellyfin_scan():
                         dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
                         
                         if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
-                            # Detect FEL type for accurate conversion safety info
-                            fel_type = await detect_fel_type(file_path) if Path(file_path).exists() else "unknown"
+                            # Two-phase FEL detection: quick check from Jellyfin info, deep scan if needed
+                            hdr_info_str = str(dovi_title) + " " + str(hdr_format)
+                            fel_type = "unknown"
+                            
+                            if Path(file_path).exists():
+                                fel_type = await detect_fel_type(file_path, hdr_info_str)
+                            else:
+                                # File not accessible - use quick detection only
+                                fel_type = detect_fel_from_mediainfo(hdr_info_str)
+                                if fel_type == 'needs_deep_scan':
+                                    fel_type = 'unknown'
                             
                             dv_profile7_files.append({
                                 **media_info,
@@ -1124,6 +1136,10 @@ async def run_jellyfin_scan():
                 }
             })
             
+            # Log FEL scan statistics
+            if FelScanStats.quick_detections > 0 or FelScanStats.deep_scans > 0:
+                await broadcast_message({"type": "output", "data": f"\n📊 FEL Detection: {FelScanStats.quick_detections} quick, {FelScanStats.deep_scans} deep scans\n"})
+            
             await broadcast_message({"type": "output", "data": f"\n✅ Jellyfin scan complete\n"})
             
     except Exception as e:
@@ -1136,17 +1152,49 @@ async def run_jellyfin_scan():
         await broadcast_message({"type": "progress", "data": {"status": "complete"}})
 
 
-async def detect_fel_type(filepath: str) -> str:
+def detect_fel_from_mediainfo(hdr_info: str) -> str:
     """
-    Detect FEL (Full Enhancement Layer) type using dovi_tool.
-    Returns: 'MEL' (safe), 'FEL' (complex, quality loss), or 'unknown'
+    Quick FEL detection from mediainfo HDR format string.
+    Uses the Dolby Vision compatibility ID to determine FEL type.
     
-    FEL types:
-    - MEL (Minimal Enhancement Layer): Safe to convert, no quality loss
-    - FEL (Full Enhancement Layer): Converting loses color enhancement data
+    Format: dvhe.07.XX where XX is the compatibility ID:
+    - 06 = Cross-compatible (MEL) - safe to convert
+    - 01 = FEL - needs deeper analysis
+    
+    Returns: 'MEL', 'FEL', or 'needs_deep_scan'
+    """
+    import re
+    
+    hdr_lower = hdr_info.lower()
+    
+    # Look for dvhe.07.XX pattern
+    match = re.search(r'dvhe\.07\.(\d+)', hdr_lower)
+    if match:
+        compat_id = match.group(1)
+        if compat_id == '06':
+            return 'MEL'  # Cross-compatible, safe to convert
+        elif compat_id == '01':
+            return 'FEL'  # FEL, will lose quality
+        # Other compatibility IDs need deep scan
+    
+    # Check for explicit MEL/FEL mentions
+    if 'mel' in hdr_lower or 'cross-compatible' in hdr_lower:
+        return 'MEL'
+    if 'fel' in hdr_lower or 'full enhancement' in hdr_lower:
+        return 'FEL'
+    
+    # Can't determine from mediainfo - needs deep scan
+    return 'needs_deep_scan'
+
+
+async def detect_fel_type_deep(filepath: str) -> str:
+    """
+    Deep FEL detection using dovi_tool (slow - extracts HEVC track).
+    Only called when mediainfo can't determine FEL type.
+    
+    Returns: 'MEL' (safe), 'FEL' (complex, quality loss), or 'unknown'
     """
     try:
-        # First, we need to extract the HEVC track to analyze with dovi_tool
         # Get video track info from mkvmerge
         proc = await asyncio.create_subprocess_exec(
             "mkvmerge", "-i", filepath,
@@ -1158,10 +1206,9 @@ async def detect_fel_type(filepath: str) -> str:
         
         # Find the HEVC track ID
         hevc_track = None
+        import re
         for line in output.split('\n'):
             if 'HEVC' in line or 'video' in line.lower():
-                # Extract track ID (format: "Track ID 0: video (HEVC/H.265)")
-                import re
                 match = re.search(r'Track ID (\d+):', line)
                 if match:
                     hevc_track = match.group(1)
@@ -1170,31 +1217,29 @@ async def detect_fel_type(filepath: str) -> str:
         if not hevc_track:
             return "unknown"
         
-        # Extract a small sample of the HEVC track (first 50MB for speed)
+        # Extract HEVC track to temp file
         import tempfile
         with tempfile.NamedTemporaryFile(suffix='.hevc', delete=False) as tmp:
             tmp_path = tmp.name
         
         try:
-            # Extract first part of HEVC track
             proc = await asyncio.create_subprocess_exec(
                 "mkvextract", filepath, "tracks", f"{hevc_track}:{tmp_path}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Wait max 30 seconds for extraction, then check what we have
+            # Wait max 60 seconds for extraction
             try:
-                await asyncio.wait_for(proc.communicate(), timeout=30.0)
+                await asyncio.wait_for(proc.communicate(), timeout=60.0)
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
             
-            # Check if file exists and has content
             if not Path(tmp_path).exists() or Path(tmp_path).stat().st_size == 0:
                 return "unknown"
             
-            # Run dovi_tool info on the extracted HEVC
+            # Run dovi_tool info
             proc = await asyncio.create_subprocess_exec(
                 "dovi_tool", "info", "-i", tmp_path, "--summary",
                 stdout=asyncio.subprocess.PIPE,
@@ -1202,9 +1247,6 @@ async def detect_fel_type(filepath: str) -> str:
             )
             stdout, stderr = await proc.communicate()
             info_output = stdout.decode() + stderr.decode()
-            
-            # Parse dovi_tool output for FEL type
-            # Look for "EL type" or enhancement layer indicators
             info_lower = info_output.lower()
             
             if "fel" in info_lower or "full enhancement" in info_lower:
@@ -1212,16 +1254,13 @@ async def detect_fel_type(filepath: str) -> str:
             elif "mel" in info_lower or "minimal enhancement" in info_lower:
                 return "MEL"
             elif "el_present: true" in info_lower or "enhancement layer: yes" in info_lower:
-                # Has enhancement layer but type unknown - assume FEL for safety
-                return "FEL"
+                return "FEL"  # Has EL but type unknown - assume FEL for safety
             elif "profile 7" in info_lower:
-                # Profile 7 detected but no EL info - likely standard (safe to convert)
-                return "standard"
+                return "standard"  # Profile 7 but no EL - safe
             else:
                 return "unknown"
                 
         finally:
-            # Clean up temp file
             try:
                 if Path(tmp_path).exists():
                     Path(tmp_path).unlink()
@@ -1229,8 +1268,39 @@ async def detect_fel_type(filepath: str) -> str:
                 pass
                 
     except Exception as e:
-        logger.warning(f"FEL detection failed for {filepath}: {e}")
+        logger.warning(f"Deep FEL detection failed for {filepath}: {e}")
         return "unknown"
+
+
+class FelScanStats:
+    """Track FEL scan statistics for reporting."""
+    quick_detections = 0
+    deep_scans = 0
+    
+    @classmethod
+    def reset(cls):
+        cls.quick_detections = 0
+        cls.deep_scans = 0
+
+
+async def detect_fel_type(filepath: str, hdr_info: str = "") -> str:
+    """
+    Two-phase FEL detection:
+    1. Quick check using mediainfo HDR format string
+    2. Deep scan with dovi_tool only if needed
+    
+    Returns: 'MEL' (safe), 'FEL' (quality loss), 'standard' (safe), or 'unknown'
+    """
+    # Phase 1: Quick detection from mediainfo
+    if hdr_info:
+        quick_result = detect_fel_from_mediainfo(hdr_info)
+        if quick_result in ('MEL', 'FEL'):
+            FelScanStats.quick_detections += 1
+            return quick_result
+    
+    # Phase 2: Deep scan needed
+    FelScanStats.deep_scans += 1
+    return await detect_fel_type_deep(filepath)
 
 
 async def run_scan(incremental: bool = True):
@@ -1241,6 +1311,9 @@ async def run_scan(incremental: bool = True):
     scan_path = state.settings.get("scan_path", MEDIA_PATH)
     depth = state.settings.get("scan_depth", 5)
     logger.info(f"Scan path: {scan_path}, depth: {depth}")
+    
+    # Reset FEL scan statistics
+    FelScanStats.reset()
     
     await broadcast_message({"type": "output", "data": f"{'='*60}\n"})
     await broadcast_message({"type": "output", "data": f"🔍 DOLBY VISION SCAN {'(Incremental)' if incremental else '(Full)'}\n"})
@@ -1286,7 +1359,8 @@ async def run_scan(incremental: bool = True):
         await broadcast_message({"type": "output", "data": f"📂 Found {len(mkv_files)} MKV files\n"})
         if skipped > 0:
             await broadcast_message({"type": "output", "data": f"⏭️ Skipping {skipped} unchanged files\n"})
-        await broadcast_message({"type": "output", "data": f"📝 Scanning {len(files_to_scan)} files...\n\n"})
+        await broadcast_message({"type": "output", "data": f"📝 Scanning {len(files_to_scan)} files...\n"})
+        await broadcast_message({"type": "output", "data": f"💡 Using two-phase FEL detection (quick + deep scan if needed)\n\n"})
         
         if not files_to_scan and skipped > 0:
             await broadcast_message({"type": "output", "data": "✅ All files cached, no new scans needed\n"})
@@ -1396,8 +1470,8 @@ async def run_scan(incremental: bool = True):
                 
                 if "Dolby Vision" in full_hdr_info:
                     if "dvhe.07" in full_hdr_info or "Profile 7" in full_hdr_info.replace(" ", ""):
-                        # Detect FEL type using dovi_tool (more accurate than mediainfo)
-                        fel_type = await detect_fel_type(filepath)
+                        # Two-phase FEL detection: quick mediainfo check, then deep scan if needed
+                        fel_type = await detect_fel_type(filepath, full_hdr_info)
                         
                         file_entry = {
                             **media_info,
@@ -1469,6 +1543,10 @@ async def run_scan(incremental: bool = True):
             if fel_count > 0:
                 await broadcast_message({"type": "output", "data": "\n⚠️  WARNING: FEL files will lose enhancement layer data if converted.\n"})
                 await broadcast_message({"type": "output", "data": "   Consider keeping original files or only converting MEL/standard files.\n"})
+        
+        # Log FEL scan statistics
+        if FelScanStats.quick_detections > 0 or FelScanStats.deep_scans > 0:
+            await broadcast_message({"type": "output", "data": f"\n📊 FEL Detection: {FelScanStats.quick_detections} quick, {FelScanStats.deep_scans} deep scans\n"})
         
         logger.info(f"Scan complete - Profile 7: {len(dv_profile7_files)}, Profile 8: {len(dv_profile8_files)}, HDR10: {hdr10_count}, SDR: {sdr_count}")
         logger.info(f"Broadcasting results to {len(state.websocket_clients)} WebSocket clients")
