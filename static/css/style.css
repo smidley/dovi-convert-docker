@@ -1173,6 +1173,17 @@ body::before {
     color: var(--accent-warning);
 }
 
+.result-item .badge.convert-safe {
+    background: rgba(0, 212, 170, 0.2);
+    color: var(--accent-secondary);
+}
+
+.result-item .badge.fel-warning {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+    font-weight: 600;
+}
+
 .result-item .badge.compatible {
     background: rgba(0, 212, 170, 0.2);
     color: var(--accent-secondary);

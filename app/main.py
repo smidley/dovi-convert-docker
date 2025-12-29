@@ -409,10 +409,16 @@ async def get_cached_results():
     for filepath, data in files.items():
         profile = data.get("profile")
         if profile in ("profile7", "profile8"):
+            fel_type = data.get("fel_type", "unknown")
+            hdr_label = f"Dolby Vision Profile {'7' if profile == 'profile7' else '8'}"
+            if profile == "profile7" and fel_type:
+                hdr_label += f" ({fel_type})"
+            
             file_info = {
                 "path": filepath,
                 "name": Path(filepath).name,
-                "hdr": f"Dolby Vision Profile {'7' if profile == 'profile7' else '8'}",
+                "hdr": hdr_label,
+                "fel_type": fel_type if profile == "profile7" else None,
                 "cached": True
             }
             if profile == "profile7":
@@ -1040,12 +1046,16 @@ async def run_jellyfin_scan():
                         dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
                         
                         if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
+                            # Detect FEL type for accurate conversion safety info
+                            fel_type = await detect_fel_type(file_path) if Path(file_path).exists() else "unknown"
+                            
                             dv_profile7_files.append({
                                 **media_info,
                                 "hdr": "Dolby Vision Profile 7",
                                 "profile": dovi_title,
+                                "fel_type": fel_type
                             })
-                            state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0}
+                            state.scan_cache["files"][file_path] = {"profile": "profile7", "mtime": 0, "fel_type": fel_type}
                         else:
                             dv_profile8_files.append({
                                 **media_info,
@@ -1073,11 +1083,35 @@ async def run_jellyfin_scan():
             await broadcast_message({"type": "output", "data": f"⚪ SDR:                          {sdr_count}\n\n"})
             
             if dv_profile7_files:
+                # Count FEL types
+                fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") == "FEL")
+                mel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("MEL", "standard"))
+                unknown_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("unknown", None))
+                
                 await broadcast_message({"type": "output", "data": "🎯 FILES NEEDING CONVERSION:\n\n"})
+                
+                if fel_count > 0:
+                    await broadcast_message({"type": "output", "data": f"  ⚠️  {fel_count} FEL files (complex - quality loss if converted)\n"})
+                if mel_count > 0:
+                    await broadcast_message({"type": "output", "data": f"  ✅ {mel_count} MEL/standard files (safe to convert)\n"})
+                if unknown_count > 0:
+                    await broadcast_message({"type": "output", "data": f"  ❓ {unknown_count} files (FEL type unknown)\n"})
+                
+                await broadcast_message({"type": "output", "data": "\n"})
+                
                 for f in dv_profile7_files[:10]:
-                    await broadcast_message({"type": "output", "data": f"  📄 {f['name']}\n"})
+                    fel_indicator = ""
+                    if f.get("fel_type") == "FEL":
+                        fel_indicator = " ⚠️ FEL"
+                    elif f.get("fel_type") in ("MEL", "standard"):
+                        fel_indicator = " ✅"
+                    await broadcast_message({"type": "output", "data": f"  📄 {f['name']}{fel_indicator}\n"})
                 if len(dv_profile7_files) > 10:
                     await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
+                
+                if fel_count > 0:
+                    await broadcast_message({"type": "output", "data": "\n⚠️  WARNING: FEL files will lose enhancement layer data if converted.\n"})
+                    await broadcast_message({"type": "output", "data": "   Consider keeping original files or only converting MEL/standard files.\n"})
             
             await broadcast_message({
                 "type": "results",
@@ -1100,6 +1134,103 @@ async def run_jellyfin_scan():
         state.current_action = None
         await broadcast_message({"type": "status", "running": False})
         await broadcast_message({"type": "progress", "data": {"status": "complete"}})
+
+
+async def detect_fel_type(filepath: str) -> str:
+    """
+    Detect FEL (Full Enhancement Layer) type using dovi_tool.
+    Returns: 'MEL' (safe), 'FEL' (complex, quality loss), or 'unknown'
+    
+    FEL types:
+    - MEL (Minimal Enhancement Layer): Safe to convert, no quality loss
+    - FEL (Full Enhancement Layer): Converting loses color enhancement data
+    """
+    try:
+        # First, we need to extract the HEVC track to analyze with dovi_tool
+        # Get video track info from mkvmerge
+        proc = await asyncio.create_subprocess_exec(
+            "mkvmerge", "-i", filepath,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        output = stdout.decode()
+        
+        # Find the HEVC track ID
+        hevc_track = None
+        for line in output.split('\n'):
+            if 'HEVC' in line or 'video' in line.lower():
+                # Extract track ID (format: "Track ID 0: video (HEVC/H.265)")
+                import re
+                match = re.search(r'Track ID (\d+):', line)
+                if match:
+                    hevc_track = match.group(1)
+                    break
+        
+        if not hevc_track:
+            return "unknown"
+        
+        # Extract a small sample of the HEVC track (first 50MB for speed)
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix='.hevc', delete=False) as tmp:
+            tmp_path = tmp.name
+        
+        try:
+            # Extract first part of HEVC track
+            proc = await asyncio.create_subprocess_exec(
+                "mkvextract", filepath, "tracks", f"{hevc_track}:{tmp_path}",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            # Wait max 30 seconds for extraction, then check what we have
+            try:
+                await asyncio.wait_for(proc.communicate(), timeout=30.0)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+            
+            # Check if file exists and has content
+            if not Path(tmp_path).exists() or Path(tmp_path).stat().st_size == 0:
+                return "unknown"
+            
+            # Run dovi_tool info on the extracted HEVC
+            proc = await asyncio.create_subprocess_exec(
+                "dovi_tool", "info", "-i", tmp_path, "--summary",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+            info_output = stdout.decode() + stderr.decode()
+            
+            # Parse dovi_tool output for FEL type
+            # Look for "EL type" or enhancement layer indicators
+            info_lower = info_output.lower()
+            
+            if "fel" in info_lower or "full enhancement" in info_lower:
+                return "FEL"
+            elif "mel" in info_lower or "minimal enhancement" in info_lower:
+                return "MEL"
+            elif "el_present: true" in info_lower or "enhancement layer: yes" in info_lower:
+                # Has enhancement layer but type unknown - assume FEL for safety
+                return "FEL"
+            elif "profile 7" in info_lower:
+                # Profile 7 detected but no EL info - likely standard (safe to convert)
+                return "standard"
+            else:
+                return "unknown"
+                
+        finally:
+            # Clean up temp file
+            try:
+                if Path(tmp_path).exists():
+                    Path(tmp_path).unlink()
+            except:
+                pass
+                
+    except Exception as e:
+        logger.warning(f"FEL detection failed for {filepath}: {e}")
+        return "unknown"
 
 
 async def run_scan(incremental: bool = True):
@@ -1265,11 +1396,21 @@ async def run_scan(incremental: bool = True):
                 
                 if "Dolby Vision" in full_hdr_info:
                     if "dvhe.07" in full_hdr_info or "Profile 7" in full_hdr_info.replace(" ", ""):
-                        dv_profile7_files.append({
+                        # Detect FEL type using dovi_tool (more accurate than mediainfo)
+                        fel_type = await detect_fel_type(filepath)
+                        
+                        file_entry = {
                             **media_info,
-                            "hdr": full_hdr_info
-                        })
-                        state.scan_cache["files"][filepath] = {"profile": "profile7", "mtime": mtime}
+                            "hdr": full_hdr_info,
+                            "fel_type": fel_type
+                        }
+                        
+                        dv_profile7_files.append(file_entry)
+                        state.scan_cache["files"][filepath] = {
+                            "profile": "profile7", 
+                            "mtime": mtime,
+                            "fel_type": fel_type
+                        }
                     else:
                         dv_profile8_files.append({
                             **media_info,
@@ -1299,11 +1440,35 @@ async def run_scan(incremental: bool = True):
         await broadcast_message({"type": "output", "data": f"⚪ SDR:                          {sdr_count}\n\n"})
         
         if dv_profile7_files:
+            # Count FEL types
+            fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") == "FEL")
+            mel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("MEL", "standard"))
+            unknown_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("unknown", None))
+            
             await broadcast_message({"type": "output", "data": "🎯 FILES NEEDING CONVERSION:\n\n"})
+            
+            if fel_count > 0:
+                await broadcast_message({"type": "output", "data": f"  ⚠️  {fel_count} FEL files (complex - quality loss if converted)\n"})
+            if mel_count > 0:
+                await broadcast_message({"type": "output", "data": f"  ✅ {mel_count} MEL/standard files (safe to convert)\n"})
+            if unknown_count > 0:
+                await broadcast_message({"type": "output", "data": f"  ❓ {unknown_count} files (FEL type unknown)\n"})
+            
+            await broadcast_message({"type": "output", "data": "\n"})
+            
             for f in dv_profile7_files[:10]:
-                await broadcast_message({"type": "output", "data": f"  📄 {f['name']}\n"})
+                fel_indicator = ""
+                if f.get("fel_type") == "FEL":
+                    fel_indicator = " ⚠️ FEL"
+                elif f.get("fel_type") in ("MEL", "standard"):
+                    fel_indicator = " ✅"
+                await broadcast_message({"type": "output", "data": f"  📄 {f['name']}{fel_indicator}\n"})
             if len(dv_profile7_files) > 10:
                 await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
+            
+            if fel_count > 0:
+                await broadcast_message({"type": "output", "data": "\n⚠️  WARNING: FEL files will lose enhancement layer data if converted.\n"})
+                await broadcast_message({"type": "output", "data": "   Consider keeping original files or only converting MEL/standard files.\n"})
         
         logger.info(f"Scan complete - Profile 7: {len(dv_profile7_files)}, Profile 8: {len(dv_profile8_files)}, HDR10: {hdr10_count}, SDR: {sdr_count}")
         logger.info(f"Broadcasting results to {len(state.websocket_clients)} WebSocket clients")

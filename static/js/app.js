@@ -1115,8 +1115,23 @@ class DoViConvertApp {
             const isSelected = this.selectedFiles.has(file.path);
             const item = document.createElement('div');
             item.className = `result-item${isSelected ? ' selected' : ''}`;
-            const badgeClass = file.type === 'convert' ? 'convert' : 'compatible';
-            const badgeText = file.type === 'convert' ? 'Needs Conversion' : 'Compatible';
+            
+            // Determine badge based on file type and FEL status
+            let badgeClass = file.type === 'convert' ? 'convert' : 'compatible';
+            let badgeText = file.type === 'convert' ? 'Needs Conversion' : 'Compatible';
+            
+            // Add FEL warning for Profile 7 files
+            if (file.type === 'convert' && file.fel_type) {
+                if (file.fel_type === 'FEL') {
+                    badgeClass = 'fel-warning';
+                    badgeText = '⚠️ FEL - Quality Loss';
+                } else if (file.fel_type === 'MEL' || file.fel_type === 'standard') {
+                    badgeClass = 'convert-safe';
+                    badgeText = '✅ Safe to Convert';
+                } else if (file.fel_type === 'unknown') {
+                    badgeText = '❓ FEL Unknown';
+                }
+            }
             
             // Build media details string
             const details = [];
