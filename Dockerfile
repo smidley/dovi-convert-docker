@@ -37,8 +37,10 @@ RUN ARCH=$(dpkg --print-architecture) && \
     chmod +x /usr/local/bin/dovi_tool && \
     rm /tmp/dovi_tool.tar.gz
 
-# Download the dovi_convert script
-RUN wget -q "https://raw.githubusercontent.com/cryptochrome/dovi_convert/main/dovi_convert.sh" -O /usr/local/bin/dovi_convert && \
+# Download the dovi_convert script (Python v7 version)
+# Reference: https://github.com/cryptochrome/dovi_convert
+ARG DOVI_CONVERT_VERSION=v7.0.0-beta1
+RUN wget -q "https://github.com/cryptochrome/dovi_convert/releases/download/${DOVI_CONVERT_VERSION}/dovi_convert.py" -O /usr/local/bin/dovi_convert && \
     chmod +x /usr/local/bin/dovi_convert
 
 # Set up application directory
