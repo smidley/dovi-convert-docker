@@ -1130,15 +1130,21 @@ class DoViConvertApp {
             let badgeText = file.type === 'convert' ? 'Needs Conversion' : 'Compatible';
             
             // Add FEL warning for Profile 7 files
+            // Uses verdicts from dovi_convert -scan: MEL, SimpleFEL, Complex FEL
             if (file.type === 'convert' && file.fel_type) {
                 if (file.fel_type === 'FEL') {
                     badgeClass = 'fel-warning';
-                    badgeText = '⚠️ FEL - Quality Loss';
+                    badgeText = '⚠️ Complex FEL - Quality Loss';
+                } else if (file.fel_type === 'SimpleFEL') {
+                    badgeClass = 'convert-safe';
+                    badgeText = '✅ Simple FEL - Safe';
                 } else if (file.fel_type === 'MEL' || file.fel_type === 'standard') {
                     badgeClass = 'convert-safe';
-                    badgeText = '✅ Safe to Convert';
+                    badgeText = '✅ MEL - Safe';
                 } else if (file.fel_type === 'unknown') {
-                    badgeText = '❓ FEL Unknown';
+                    badgeText = '❓ Unknown - Use Caution';
+                } else if (file.fel_type === 'pending') {
+                    badgeText = '⏳ Scanning...';
                 }
             }
             

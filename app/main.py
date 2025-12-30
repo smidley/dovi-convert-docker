@@ -1305,111 +1305,68 @@ def detect_fel_from_mediainfo(hdr_info: str) -> str:
 
 async def detect_fel_type_deep(filepath: str) -> str:
     """
-    Deep FEL detection using dovi_tool (slow - extracts HEVC track).
-    Only called when mediainfo can't determine FEL type.
+    Deep FEL detection using dovi_convert script's -scan feature.
+    This leverages the upstream script's proven detection logic.
     
-    Returns: 'MEL' (safe), 'FEL' (complex, quality loss), or 'unknown'
+    Returns: 'MEL' (safe), 'FEL' (complex, quality loss), 'SimpleFEL' (likely safe), or 'unknown'
+    
+    Reference: https://github.com/cryptochrome/dovi_convert
     """
     filename = Path(filepath).name
-    logger.info(f"[Deep Scan] Starting for: {filename}")
+    logger.info(f"[Deep Scan] Using dovi_convert -scan for: {filename}")
     
     try:
-        # Get video track info from mkvmerge
+        # Use the dovi_convert script's -scan feature
+        # It outputs colored text with verdicts: MEL (green), Simple FEL (cyan), Complex FEL (red)
         proc = await asyncio.create_subprocess_exec(
-            "mkvmerge", "-i", filepath,
+            "dovi_convert", "-scan", filepath,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            stderr=asyncio.subprocess.PIPE,
+            env={**os.environ, "NO_COLOR": "1"}  # Disable colors for easier parsing
         )
-        stdout, stderr = await proc.communicate()
-        output = stdout.decode()
-        
-        logger.info(f"[Deep Scan] mkvmerge output: {output[:200]}...")
-        
-        # Find the HEVC track ID
-        hevc_track = None
-        import re
-        for line in output.split('\n'):
-            if 'HEVC' in line or 'video' in line.lower():
-                match = re.search(r'Track ID (\d+):', line)
-                if match:
-                    hevc_track = match.group(1)
-                    logger.info(f"[Deep Scan] Found HEVC track: {hevc_track}")
-                    break
-        
-        if not hevc_track:
-            logger.warning(f"[Deep Scan] No HEVC track found in {filename}")
-            return "unknown"
-        
-        # Extract HEVC track to temp file
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.hevc', delete=False) as tmp:
-            tmp_path = tmp.name
         
         try:
-            logger.info(f"[Deep Scan] Extracting track {hevc_track} to {tmp_path}")
-            proc = await asyncio.create_subprocess_exec(
-                "mkvextract", filepath, "tracks", f"{hevc_track}:{tmp_path}",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
-            # Wait max 120 seconds for extraction (large files need more time)
-            try:
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
-                logger.info(f"[Deep Scan] mkvextract completed, exit code: {proc.returncode}")
-            except asyncio.TimeoutError:
-                logger.warning(f"[Deep Scan] mkvextract timed out for {filename}")
-                proc.kill()
-                await proc.wait()
-                return "unknown"
-            
-            if not Path(tmp_path).exists():
-                logger.warning(f"[Deep Scan] Temp file not created for {filename}")
-                return "unknown"
-            
-            file_size = Path(tmp_path).stat().st_size
-            logger.info(f"[Deep Scan] Extracted file size: {file_size / 1024 / 1024:.1f} MB")
-            
-            if file_size == 0:
-                logger.warning(f"[Deep Scan] Extracted file is empty for {filename}")
-                return "unknown"
-            
-            # Run dovi_tool info
-            logger.info(f"[Deep Scan] Running dovi_tool info...")
-            proc = await asyncio.create_subprocess_exec(
-                "dovi_tool", "info", "-i", tmp_path, "--summary",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
-            info_output = stdout.decode() + stderr.decode()
-            
-            # Log the full dovi_tool output for debugging
-            logger.info(f"[Deep Scan] dovi_tool output for {filename}:\n{info_output}")
-            
-            info_lower = info_output.lower()
-            
-            # Parse the output
-            result = "unknown"
-            if "fel" in info_lower or "full enhancement" in info_lower:
-                result = "FEL"
-            elif "mel" in info_lower or "minimal enhancement" in info_lower:
-                result = "MEL"
-            elif "el_present: true" in info_lower or "enhancement layer: yes" in info_lower:
-                result = "FEL"  # Has EL but type unknown - assume FEL for safety
-            elif "profile 7" in info_lower:
-                result = "standard"  # Profile 7 but no EL - safe
-            
-            logger.info(f"[Deep Scan] Result for {filename}: {result}")
-            return result
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"[Deep Scan] dovi_convert -scan timed out for {filename}")
+            proc.kill()
+            await proc.wait()
+            return "unknown"
+        
+        output = stdout.decode() + stderr.decode()
+        logger.info(f"[Deep Scan] dovi_convert output for {filename}:\n{output}")
+        
+        output_lower = output.lower()
+        
+        # Parse the dovi_convert -scan output for verdicts
+        # The script outputs lines like:
+        # "MEL" or "Profile 7 MEL" - safe to convert
+        # "Simple FEL" - likely safe to convert  
+        # "Complex FEL" - NOT safe, will lose quality
+        # "Profile 8" - already compatible, no conversion needed
+        
+        if "complex fel" in output_lower:
+            logger.info(f"[Deep Scan] Result for {filename}: FEL (Complex - quality loss if converted)")
+            return "FEL"
+        elif "simple fel" in output_lower:
+            logger.info(f"[Deep Scan] Result for {filename}: SimpleFEL (likely safe)")
+            return "SimpleFEL"
+        elif "mel" in output_lower and "fel" not in output_lower:
+            logger.info(f"[Deep Scan] Result for {filename}: MEL (safe)")
+            return "MEL"
+        elif "profile 8" in output_lower:
+            logger.info(f"[Deep Scan] Result for {filename}: Profile8 (already compatible)")
+            return "Profile8"
+        elif "not a dolby vision" in output_lower or "no dolby vision" in output_lower:
+            logger.info(f"[Deep Scan] Result for {filename}: Not DV")
+            return "NotDV"
+        else:
+            logger.warning(f"[Deep Scan] Could not parse verdict from dovi_convert output for {filename}")
+            return "unknown"
                 
-        finally:
-            try:
-                if Path(tmp_path).exists():
-                    Path(tmp_path).unlink()
-            except:
-                pass
-                
+    except FileNotFoundError:
+        logger.error(f"[Deep Scan] dovi_convert script not found - is it installed?")
+        return "unknown"
     except Exception as e:
         logger.error(f"[Deep Scan] Failed for {filepath}: {e}")
         return "unknown"
