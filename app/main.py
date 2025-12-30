@@ -1060,9 +1060,10 @@ async def run_jellyfin_scan():
                             hdr_info_str = str(dovi_title) + " " + str(hdr_format)
                             quick_fel = detect_fel_from_mediainfo(hdr_info_str)
                             
-                            # Log first few detections to help debug
-                            if len(dv_profile7_files) + len(needs_deep_scan) < 3:
-                                logger.info(f"FEL detection for '{file_name}': hdr_info='{hdr_info_str}' -> {quick_fel}")
+                            # Log detections to help debug
+                            total_p7 = len(dv_profile7_files) + len(needs_deep_scan)
+                            if total_p7 < 5 or quick_fel == 'needs_deep_scan':
+                                logger.info(f"[Quick Scan] '{file_name}': hdr='{hdr_info_str[:80]}' -> {quick_fel}")
                             
                             file_entry = {
                                 **media_info,
@@ -1298,6 +1299,9 @@ async def detect_fel_type_deep(filepath: str) -> str:
     
     Returns: 'MEL' (safe), 'FEL' (complex, quality loss), or 'unknown'
     """
+    filename = Path(filepath).name
+    logger.info(f"[Deep Scan] Starting for: {filename}")
+    
     try:
         # Get video track info from mkvmerge
         proc = await asyncio.create_subprocess_exec(
@@ -1305,8 +1309,10 @@ async def detect_fel_type_deep(filepath: str) -> str:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        stdout, _ = await proc.communicate()
+        stdout, stderr = await proc.communicate()
         output = stdout.decode()
+        
+        logger.info(f"[Deep Scan] mkvmerge output: {output[:200]}...")
         
         # Find the HEVC track ID
         hevc_track = None
@@ -1316,9 +1322,11 @@ async def detect_fel_type_deep(filepath: str) -> str:
                 match = re.search(r'Track ID (\d+):', line)
                 if match:
                     hevc_track = match.group(1)
+                    logger.info(f"[Deep Scan] Found HEVC track: {hevc_track}")
                     break
         
         if not hevc_track:
+            logger.warning(f"[Deep Scan] No HEVC track found in {filename}")
             return "unknown"
         
         # Extract HEVC track to temp file
@@ -1327,23 +1335,36 @@ async def detect_fel_type_deep(filepath: str) -> str:
             tmp_path = tmp.name
         
         try:
+            logger.info(f"[Deep Scan] Extracting track {hevc_track} to {tmp_path}")
             proc = await asyncio.create_subprocess_exec(
                 "mkvextract", filepath, "tracks", f"{hevc_track}:{tmp_path}",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             
-            # Wait max 60 seconds for extraction
+            # Wait max 120 seconds for extraction (large files need more time)
             try:
-                await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+                logger.info(f"[Deep Scan] mkvextract completed, exit code: {proc.returncode}")
             except asyncio.TimeoutError:
+                logger.warning(f"[Deep Scan] mkvextract timed out for {filename}")
                 proc.kill()
                 await proc.wait()
+                return "unknown"
             
-            if not Path(tmp_path).exists() or Path(tmp_path).stat().st_size == 0:
+            if not Path(tmp_path).exists():
+                logger.warning(f"[Deep Scan] Temp file not created for {filename}")
+                return "unknown"
+            
+            file_size = Path(tmp_path).stat().st_size
+            logger.info(f"[Deep Scan] Extracted file size: {file_size / 1024 / 1024:.1f} MB")
+            
+            if file_size == 0:
+                logger.warning(f"[Deep Scan] Extracted file is empty for {filename}")
                 return "unknown"
             
             # Run dovi_tool info
+            logger.info(f"[Deep Scan] Running dovi_tool info...")
             proc = await asyncio.create_subprocess_exec(
                 "dovi_tool", "info", "-i", tmp_path, "--summary",
                 stdout=asyncio.subprocess.PIPE,
@@ -1351,18 +1372,25 @@ async def detect_fel_type_deep(filepath: str) -> str:
             )
             stdout, stderr = await proc.communicate()
             info_output = stdout.decode() + stderr.decode()
+            
+            # Log the full dovi_tool output for debugging
+            logger.info(f"[Deep Scan] dovi_tool output for {filename}:\n{info_output}")
+            
             info_lower = info_output.lower()
             
+            # Parse the output
+            result = "unknown"
             if "fel" in info_lower or "full enhancement" in info_lower:
-                return "FEL"
+                result = "FEL"
             elif "mel" in info_lower or "minimal enhancement" in info_lower:
-                return "MEL"
+                result = "MEL"
             elif "el_present: true" in info_lower or "enhancement layer: yes" in info_lower:
-                return "FEL"  # Has EL but type unknown - assume FEL for safety
+                result = "FEL"  # Has EL but type unknown - assume FEL for safety
             elif "profile 7" in info_lower:
-                return "standard"  # Profile 7 but no EL - safe
-            else:
-                return "unknown"
+                result = "standard"  # Profile 7 but no EL - safe
+            
+            logger.info(f"[Deep Scan] Result for {filename}: {result}")
+            return result
                 
         finally:
             try:
@@ -1372,7 +1400,7 @@ async def detect_fel_type_deep(filepath: str) -> str:
                 pass
                 
     except Exception as e:
-        logger.warning(f"Deep FEL detection failed for {filepath}: {e}")
+        logger.error(f"[Deep Scan] Failed for {filepath}: {e}")
         return "unknown"
 
 
