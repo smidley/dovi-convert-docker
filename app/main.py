@@ -6,6 +6,7 @@ A FastAPI application providing a web UI for the dovi_convert script.
 import asyncio
 import os
 import json
+import re
 import traceback
 import shlex
 import logging
@@ -1054,8 +1055,18 @@ async def run_jellyfin_scan():
                     
                     if is_dv:
                         dovi_title = video_stream.get("VideoDoViTitle", "") or hdr_format
+                        dovi_title_str = str(dovi_title).lower()
                         
-                        if "7" in str(dovi_title) or "dvhe.07" in str(dovi_title).lower():
+                        # Check for Profile 7 - must have actual DV profile indicator, not just any "7"
+                        is_profile7 = (
+                            "profile 7" in dovi_title_str or
+                            "dvhe.07" in dovi_title_str or
+                            "dv profile 7" in dovi_title_str or
+                            # Match "7.6" or "7.1" but not random numbers like "2097"
+                            bool(re.search(r'\b7\.[0-9]', dovi_title_str))
+                        )
+                        
+                        if is_profile7:
                             # Quick FEL check from metadata
                             hdr_info_str = str(dovi_title) + " " + str(hdr_format)
                             quick_fel = detect_fel_from_mediainfo(hdr_info_str)
