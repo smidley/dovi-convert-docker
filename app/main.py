@@ -1173,35 +1173,42 @@ async def run_jellyfin_scan():
             await broadcast_message({"type": "output", "data": f"⚪ SDR:                          {sdr_count}\n\n"})
             
             if dv_profile7_files:
-                # Count FEL types
-                fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") == "FEL")
+                # Count FEL types - 3 verdicts from dovi_convert: MEL, SimpleFEL, ComplexFEL
+                complex_fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("ComplexFEL", "FEL"))
+                simple_fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") == "SimpleFEL")
                 mel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("MEL", "standard"))
                 unknown_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("unknown", None))
                 
                 await broadcast_message({"type": "output", "data": "🎯 FILES NEEDING CONVERSION:\n\n"})
                 
-                if fel_count > 0:
-                    await broadcast_message({"type": "output", "data": f"  ⚠️  {fel_count} FEL files (complex - quality loss if converted)\n"})
                 if mel_count > 0:
-                    await broadcast_message({"type": "output", "data": f"  ✅ {mel_count} MEL/standard files (safe to convert)\n"})
+                    await broadcast_message({"type": "output", "data": f"  🟢 {mel_count} MEL files (safe to convert)\n"})
+                if simple_fel_count > 0:
+                    await broadcast_message({"type": "output", "data": f"  🟡 {simple_fel_count} Simple FEL files (likely safe)\n"})
+                if complex_fel_count > 0:
+                    await broadcast_message({"type": "output", "data": f"  🔴 {complex_fel_count} Complex FEL files (skip - quality loss)\n"})
                 if unknown_count > 0:
-                    await broadcast_message({"type": "output", "data": f"  ❓ {unknown_count} files (FEL type unknown)\n"})
+                    await broadcast_message({"type": "output", "data": f"  ❓ {unknown_count} files (unknown type)\n"})
                 
                 await broadcast_message({"type": "output", "data": "\n"})
                 
                 for f in dv_profile7_files[:10]:
-                    fel_indicator = ""
-                    if f.get("fel_type") == "FEL":
-                        fel_indicator = " ⚠️ FEL"
-                    elif f.get("fel_type") in ("MEL", "standard"):
-                        fel_indicator = " ✅"
+                    fel_type = f.get("fel_type", "")
+                    if fel_type in ("ComplexFEL", "FEL"):
+                        fel_indicator = " 🔴"
+                    elif fel_type == "SimpleFEL":
+                        fel_indicator = " 🟡"
+                    elif fel_type in ("MEL", "standard"):
+                        fel_indicator = " 🟢"
+                    else:
+                        fel_indicator = " ❓"
                     await broadcast_message({"type": "output", "data": f"  📄 {f['name']}{fel_indicator}\n"})
                 if len(dv_profile7_files) > 10:
                     await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
                 
-                if fel_count > 0:
-                    await broadcast_message({"type": "output", "data": "\n⚠️  WARNING: FEL files will lose enhancement layer data if converted.\n"})
-                    await broadcast_message({"type": "output", "data": "   Consider keeping original files or only converting MEL/standard files.\n"})
+                if complex_fel_count > 0:
+                    await broadcast_message({"type": "output", "data": "\n🔴 WARNING: Complex FEL files will lose quality if converted.\n"})
+                    await broadcast_message({"type": "output", "data": "   These should be skipped or watched in HDR10 fallback mode.\n"})
             
             await broadcast_message({
                 "type": "results",
@@ -1336,32 +1343,43 @@ async def detect_fel_type_deep(filepath: str) -> str:
         output = stdout.decode() + stderr.decode()
         logger.info(f"[Deep Scan] dovi_convert output for {filename}:\n{output}")
         
-        output_lower = output.lower()
+        # Normalize output for parsing - handle various formats
+        output_normalized = output.lower().replace("-", " ").replace("_", " ")
         
         # Parse the dovi_convert -scan output for verdicts
-        # The script outputs lines like:
-        # "MEL" or "Profile 7 MEL" - safe to convert
-        # "Simple FEL" - likely safe to convert  
-        # "Complex FEL" - NOT safe, will lose quality
-        # "Profile 8" - already compatible, no conversion needed
+        # The script has 3 verdicts:
+        # - MEL (safe to convert)
+        # - Simple-FEL / Simple FEL (likely safe to convert)  
+        # - Complex-FEL / Complex FEL (NOT safe, will lose quality)
         
-        if "complex fel" in output_lower:
-            logger.info(f"[Deep Scan] Result for {filename}: FEL (Complex - quality loss if converted)")
-            return "FEL"
-        elif "simple fel" in output_lower:
+        # Check for Complex FEL first (most restrictive)
+        if "complex fel" in output_normalized or "complexfel" in output_normalized:
+            logger.info(f"[Deep Scan] Result for {filename}: ComplexFEL (quality loss if converted)")
+            return "ComplexFEL"
+        
+        # Check for Simple FEL (likely safe)
+        elif "simple fel" in output_normalized or "simplefel" in output_normalized:
             logger.info(f"[Deep Scan] Result for {filename}: SimpleFEL (likely safe)")
             return "SimpleFEL"
-        elif "mel" in output_lower and "fel" not in output_lower:
+        
+        # Check for MEL (safe) - make sure it's not part of "simple" 
+        elif re.search(r'\bmel\b', output_normalized) and "fel" not in output_normalized:
             logger.info(f"[Deep Scan] Result for {filename}: MEL (safe)")
             return "MEL"
-        elif "profile 8" in output_lower:
+        
+        # Check for Profile 8 (already compatible)
+        elif "profile 8" in output_normalized:
             logger.info(f"[Deep Scan] Result for {filename}: Profile8 (already compatible)")
             return "Profile8"
-        elif "not a dolby vision" in output_lower or "no dolby vision" in output_lower:
+        
+        # Check for non-DV content
+        elif "not a dolby vision" in output_normalized or "no dolby vision" in output_normalized or "not dolby vision" in output_normalized:
             logger.info(f"[Deep Scan] Result for {filename}: Not DV")
             return "NotDV"
+        
         else:
-            logger.warning(f"[Deep Scan] Could not parse verdict from dovi_convert output for {filename}")
+            # Log the raw output to help debug parsing issues
+            logger.warning(f"[Deep Scan] Could not parse verdict for {filename}. Raw output: {output[:500]}")
             return "unknown"
                 
     except FileNotFoundError:
@@ -1684,35 +1702,42 @@ async def run_scan(incremental: bool = True):
         await broadcast_message({"type": "output", "data": f"⚪ SDR:                          {sdr_count}\n\n"})
         
         if dv_profile7_files:
-            # Count FEL types
-            fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") == "FEL")
+            # Count FEL types - 3 verdicts from dovi_convert: MEL, SimpleFEL, ComplexFEL
+            complex_fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("ComplexFEL", "FEL"))
+            simple_fel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") == "SimpleFEL")
             mel_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("MEL", "standard"))
             unknown_count = sum(1 for f in dv_profile7_files if f.get("fel_type") in ("unknown", None))
             
             await broadcast_message({"type": "output", "data": "🎯 FILES NEEDING CONVERSION:\n\n"})
             
-            if fel_count > 0:
-                await broadcast_message({"type": "output", "data": f"  ⚠️  {fel_count} FEL files (complex - quality loss if converted)\n"})
             if mel_count > 0:
-                await broadcast_message({"type": "output", "data": f"  ✅ {mel_count} MEL/standard files (safe to convert)\n"})
+                await broadcast_message({"type": "output", "data": f"  🟢 {mel_count} MEL files (safe to convert)\n"})
+            if simple_fel_count > 0:
+                await broadcast_message({"type": "output", "data": f"  🟡 {simple_fel_count} Simple FEL files (likely safe)\n"})
+            if complex_fel_count > 0:
+                await broadcast_message({"type": "output", "data": f"  🔴 {complex_fel_count} Complex FEL files (skip - quality loss)\n"})
             if unknown_count > 0:
-                await broadcast_message({"type": "output", "data": f"  ❓ {unknown_count} files (FEL type unknown)\n"})
+                await broadcast_message({"type": "output", "data": f"  ❓ {unknown_count} files (unknown type)\n"})
             
             await broadcast_message({"type": "output", "data": "\n"})
             
             for f in dv_profile7_files[:10]:
-                fel_indicator = ""
-                if f.get("fel_type") == "FEL":
-                    fel_indicator = " ⚠️ FEL"
-                elif f.get("fel_type") in ("MEL", "standard"):
-                    fel_indicator = " ✅"
+                fel_type = f.get("fel_type", "")
+                if fel_type in ("ComplexFEL", "FEL"):
+                    fel_indicator = " 🔴"
+                elif fel_type == "SimpleFEL":
+                    fel_indicator = " 🟡"
+                elif fel_type in ("MEL", "standard"):
+                    fel_indicator = " 🟢"
+                else:
+                    fel_indicator = " ❓"
                 await broadcast_message({"type": "output", "data": f"  📄 {f['name']}{fel_indicator}\n"})
             if len(dv_profile7_files) > 10:
                 await broadcast_message({"type": "output", "data": f"  ... and {len(dv_profile7_files) - 10} more\n"})
             
-            if fel_count > 0:
-                await broadcast_message({"type": "output", "data": "\n⚠️  WARNING: FEL files will lose enhancement layer data if converted.\n"})
-                await broadcast_message({"type": "output", "data": "   Consider keeping original files or only converting MEL/standard files.\n"})
+            if complex_fel_count > 0:
+                await broadcast_message({"type": "output", "data": "\n🔴 WARNING: Complex FEL files will lose quality if converted.\n"})
+                await broadcast_message({"type": "output", "data": "   These should be skipped or watched in HDR10 fallback mode.\n"})
         
         # Log FEL scan statistics
         if FelScanStats.quick_detections > 0 or FelScanStats.deep_scans > 0:

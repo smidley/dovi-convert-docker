@@ -1184,6 +1184,18 @@ body::before {
     font-weight: 600;
 }
 
+.result-item .badge.fel-caution {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+    font-weight: 600;
+}
+
+.result-item .badge.fel-unknown {
+    background: rgba(156, 163, 175, 0.2);
+    color: #9ca3af;
+    font-weight: 600;
+}
+
 .result-item .badge.compatible {
     background: rgba(0, 212, 170, 0.2);
     color: var(--accent-secondary);
