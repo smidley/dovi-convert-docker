@@ -13,7 +13,7 @@ on:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: smidley/dovi-convert
+  IMAGE_NAME: jpkrny/dovi-convert
 
 jobs:
   build:

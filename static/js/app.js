@@ -854,7 +854,7 @@ class DoViConvertApp {
                 if (data.settings) this.applySettings(data.settings);
                 break;
             case 'output':
-                this.appendToTerminal(data.data);
+                this.appendToTerminal(data.data, 'normal', { live: data.live, replaceLive: data.replace_live });
                 break;
             case 'log_marker':
                 this.addLogMarker(data.data.id, data.data.filename);
@@ -1557,15 +1557,26 @@ class DoViConvertApp {
         }
     }
 
-    appendToTerminal(text, type = 'normal') {
-        this.logHistory.push({ text, type, time: Date.now() });
+    appendToTerminal(text, type = 'normal', opts = {}) {
+        const { live = false, replaceLive = false } = opts;
+        // Live (progress-bar) lines overwrite the previous live line in the history too
+        const last = this.logHistory[this.logHistory.length - 1];
+        if ((live || replaceLive) && last && last.live) this.logHistory.pop();
+        this.logHistory.push({ text, type, time: Date.now(), live });
         if (this.logHistory.length > this.maxLogLines) this.logHistory.shift();
-        this.saveState();
-        this.appendToTerminalDirect(text, type);
+        if (!live) this.saveState();
+        this.appendToTerminalDirect(text, type, opts);
     }
     
-    appendToTerminalDirect(text, type = 'normal') {
+    appendToTerminalDirect(text, type = 'normal', opts = {}) {
         if (!this.terminalContent) return;
+        const { live = false, replaceLive = false } = opts;
+        
+        // Drop the previous live line so progress updates stay on one line
+        if ((live || replaceLive) && this.liveSpan && this.liveSpan.isConnected) {
+            this.liveSpan.remove();
+        }
+        this.liveSpan = null;
         
         const welcomeMsg = this.terminalContent.querySelector('.welcome-msg');
         if (welcomeMsg) this.terminalContent.innerHTML = '';
@@ -1582,6 +1593,7 @@ class DoViConvertApp {
         else if (text.includes('🔍') || text.includes('🎬')) span.style.color = 'var(--accent-primary)';
         
         this.terminalContent.appendChild(span);
+        if (live) this.liveSpan = span;
         this.terminalContent.scrollTop = this.terminalContent.scrollHeight;
     }
 

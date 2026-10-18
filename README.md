@@ -22,6 +22,7 @@ Converting to Profile 8.1 removes the EL while preserving the dynamic RPU metada
 - 🎬 **Batch Conversion** - Convert multiple files automatically
 - 📊 **Real-time Output** - Live streaming of conversion progress
 - ⚙️ **Configurable Options** - Safe mode, auto-cleanup, scan depth
+- 📚 **Jellyfin Integration** - Scan your Jellyfin library and refresh metadata after conversion (Jellyfin 10.x – 12.x)
 - 💾 **Non-destructive** - Creates backups of original files
 - 🐳 **Unraid Ready** - Easy installation via Community Applications
 
@@ -82,6 +83,19 @@ services:
 | **Include Simple FEL** | Automatically include Simple FEL files in batch conversion |
 | **Auto Cleanup** | Delete backup files after successful conversion |
 
+## Jellyfin Integration
+
+Instead of scanning directories, the app can scan your Jellyfin library via its API and refresh the converted items afterwards.
+
+1. In Jellyfin: **Dashboard → API Keys → +** and create a key for `dovi-convert`
+2. In the web interface, enable Jellyfin, enter the server URL (e.g. `http://jellyfin:8096`) and the API key, then click **Test**
+3. Mount your media into the container **at the same paths Jellyfin uses** (the test shows the library paths Jellyfin reports)
+
+Compatibility:
+- Works with Jellyfin **10.x, 11.x and 12.x**. Authentication uses the `Authorization: MediaBrowser` header; Jellyfin 12 no longer accepts the legacy `X-Emby-Token` header or `?api_key=` parameter.
+- Large libraries are fetched in pages of 500 items.
+- After a conversion or restore, the matching item is refreshed by exact path (or unique file name); if it cannot be matched, Jellyfin is notified of the changed file instead.
+
 ## Volume Mappings
 
 | Container Path | Description |
@@ -116,6 +130,10 @@ If using Plex on Apple TV 4K, be aware of the "Fake Dolby Vision" issue where Pl
 ### Backup Files
 
 Original files are preserved as `*.bak.dovi_convert`. Enable **Auto Cleanup** only after verifying conversions are successful.
+
+## Releases
+
+See [CHANGELOG.md](CHANGELOG.md) and [RELEASE_NOTES.md](RELEASE_NOTES.md).
 
 ## Building Locally
 
